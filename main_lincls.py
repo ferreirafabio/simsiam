@@ -96,9 +96,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
-parser.add_argument('--dataset', default='ImageNet', type=str,
-                    help='dataset name. Should be one of ImageNet or CIFAR10.')
-
+parser.add_argument('--dataset', default='ImageNet', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
 parser.add_argument('--expt-name', default='default_experiment', type=str, help='Name of the experiment')
 parser.add_argument('--save-freq', default=10, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
 
@@ -136,7 +134,7 @@ def main():
     print(args_dict)
     timestr = time.strftime("%Y%m%d-%H%M%S")
 
-    with open(os.path.join(expt_sub_dir, f"args_dict_{timestr}.yaml"), "w") as f:
+    with open(os.path.join(expt_sub_dir, f"args_dict_linearcls_{timestr}.yaml"), "w") as f:
         yaml.dump(args_dict, f)
 
     if args.seed is not None:
