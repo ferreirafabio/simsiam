@@ -518,14 +518,16 @@ def main_worker(gpu, ngpus_per_node, args):
         # TODO uncomment:
         #train(train_loader, model, criterion, optimizer, stn_optimizer, epoch, args, writer)
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                and args.rank % ngpus_per_node == 0) and epoch % args.save_freq==0:
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'optimizer' : optimizer.state_dict(),
-            }, is_best=False, filename=os.path.join(args.expt_dir, 'checkpoint_{:04d}.pth.tar'.format(epoch)))
+        is_last_epoch = epoch + 1 >= args.epochs
+
+        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+            if epoch % args.save_freq == 0 or is_last_epoch:
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': args.arch,
+                    'state_dict': model.state_dict(),
+                    'optimizer' : optimizer.state_dict(),
+                }, is_best=False, filename=os.path.join(args.expt_dir, 'checkpoint_{:04d}.pth.tar'.format(epoch)))
 
 
     # shut down the writer at the end of training
