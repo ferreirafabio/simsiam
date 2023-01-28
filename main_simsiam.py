@@ -128,7 +128,7 @@ parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=100, type=int, 
+parser.add_argument("--summary_writer_freq", default=1, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
 parser.add_argument("--grad_check_freq", default=100, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
@@ -418,9 +418,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # writer = None
     summary_writer = None
     if args.rank == 0:
-        # writer = SummaryWriter(log_dir=os.path.join(args.expt_dir, f"tensorboard_pretraining_{args.epochs}_{init_lr}"))
-        # TODO remove above
-        summary_writer = SummaryWriterCustom(args.expt_dir / "summary", batch_size=args.batch_size)
+        summary_writer = SummaryWriterCustom(args.expt_dir / "summary", plot_size=args.summary_plot_size)
 
 
     if not args.resize_all_inputs and args.dataset == 'ImageNet':
@@ -594,9 +592,9 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
             stn_images[0] = transform_view1(stn_images[0])
             stn_images[1] = transform_view2(stn_images[1])          
 
-            # Log stuff to tensorboard
-            if global_step % args.summary_writer_freq == 0 and args.rank == 0:
-                summary_writer.write_stn_info(stn_images, images, thetas, epoch, global_step)
+        # Log stuff to tensorboard
+        if epoch % args.summary_writer_freq == 0 and args.rank == 0:
+            summary_writer.write_stn_info(stn_images, images, thetas, epoch, global_step)
         
         # print("stn_images[0].shape (should be [batch_size, 3, 32, 32]: ", stn_images[0].shape)
         # print("images.shape (should be [batch_size, 3, 32, 32])", images.shape)

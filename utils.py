@@ -6,13 +6,13 @@ import argparse
 import torch
 
 class SummaryWriterCustom(SummaryWriter):
-    def __init__(self, out_path, batch_size):
+    def __init__(self, out_path, plot_size):
         # super().__init__()
-        self.batch_size = batch_size
+        self.plot_size = plot_size
         self.writer = SummaryWriter(out_path)
 
     def write_image_grid(self, tag, stn_images, original_images, epoch, global_step):
-        fig = image_grid(stn_images=stn_images, original_images=original_images, epoch=epoch, plot_size=self.batch_size)
+        fig = image_grid(stn_images=stn_images, original_images=original_images, epoch=epoch, plot_size=self.plot_size)
         self.writer.add_figure(tag, fig, global_step=global_step)
         
     def write_theta_heatmap(self, tag, theta, epoch, global_step):
@@ -23,6 +23,7 @@ class SummaryWriterCustom(SummaryWriter):
         self.writer.add_scalar(tag=tag, scalar_value=scalar_value, global_step=global_step)
 
     def write_stn_info(self, stn_images, images, thetas, epoch, it):
+        print(thetas[0].shape, thetas[1].shape)
         theta_v1 = thetas[0][0].cpu().detach().numpy()
         theta_v2 = thetas[1][0].cpu().detach().numpy()
         self.write_image_grid(tag="images", stn_images=stn_images, original_images=images, epoch=epoch, global_step=it)
@@ -98,7 +99,7 @@ def image_grid(stn_images, original_images, epoch, plot_size=16):
 def theta_heatmap(theta, epoch):
     figure, ax = plt.subplots()
     # figure.tight_layout()
-    sns.heatmap(theta[0], annot=True)
+    sns.heatmap(theta, annot=True)
     ax.set_title(f'Theta @ {epoch} epoch')
     return figure
 
