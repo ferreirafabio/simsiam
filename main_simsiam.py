@@ -128,9 +128,9 @@ parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=1, type=int, 
+parser.add_argument("--summary_writer_freq", default=25, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
-parser.add_argument("--grad_check_freq", default=100, type=int,
+parser.add_argument("--grad_check_freq", default=25, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
 parser.add_argument("--summary_plot_size", default=16, type=int,
                     help="Defines the number of samples to show in the summary writer.")
