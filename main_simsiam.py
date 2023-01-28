@@ -138,8 +138,8 @@ parser.add_argument('--stn_pretrained_weights', default='', type=str,
                     help="Path to pretrained weights of the STN network. If specified, the STN is not trained and used to pre-process images solely.")
 parser.add_argument("--deep_loc_net", default=False, type=utils.bool_flag,
                     help="(legacy) Set this flag to use a deep loc net. (default: False).")
-parser.add_argument("--stn_res", default=(224, 96), type=int, nargs='+',
-                    help="Set the resolution of the global and local crops of the STN (default: 224x and 96x)")
+parser.add_argument("--stn_res", default=(32, 32), type=int, nargs='+',
+                    help="Set the resolution of the global and local crops of the STN (default: 32x and 32x)")
 parser.add_argument("--use_unbounded_stn", default=False, type=utils.bool_flag,
                     help="Set this flag to not use a tanh in the last STN layer (default: use bounded STN).")
 parser.add_argument("--stn_warmup_epochs", default=0, type=int,
@@ -205,8 +205,8 @@ def main():
         args.epochs = 800
         args.lr = 0.03
         # args.batch_size = 512
-        args.batch_size = 2048
         # args.batch_size = 1024
+        args.batch_size = 2048
         args.workers = 4
         args.weight_decay = 0.0005
         print(f"Changed hyperparameters for CIFAR10")
@@ -558,10 +558,10 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
 
         stn_images, thetas = stn(images)
 
-        # print("len(stn_images): ", len(stn_images)) # should be 2
+        # print("len(stn_images) (should be 2): ", len(stn_images))
         # print("stn_images: ", stn_images)
-        # print("stn_images[0].shape: ", stn_images[0].shape) # should be [batch_size, 3, 32, 32]
-        # print("stn_images[1].shape: ", stn_images[1].shape) # should be [batch_size, 3, 32, 32]
+        # print("stn_images[0].shape: ", stn_images[0].shape) # should be [batch_size/n_gpus, 3, 32, 32]
+        # print("stn_images[1].shape: ", stn_images[1].shape) # should be [batch_size/n_gpus, 3, 32, 32]
 
         penalty = torch.tensor(0.).cuda()
         if args.use_stn_penalty:
