@@ -23,7 +23,6 @@ class SummaryWriterCustom(SummaryWriter):
         self.writer.add_scalar(tag=tag, scalar_value=scalar_value, global_step=global_step)
 
     def write_stn_info(self, stn_images, images, thetas, epoch, it):
-        print(thetas[0].shape, thetas[1].shape)
         theta_v1 = thetas[0][0].cpu().detach().numpy()
         theta_v2 = thetas[1][0].cpu().detach().numpy()
         self.write_image_grid(tag="images", stn_images=stn_images, original_images=images, epoch=epoch, global_step=it)
