@@ -11,8 +11,8 @@ class SummaryWriterCustom(SummaryWriter):
         self.batch_size = batch_size
         self.writer = SummaryWriter(out_path)
 
-    def write_image_grid(self, tag, images, original_images, epoch, global_step):
-        fig = image_grid(images=images, original_images=original_images, epoch=epoch, plot_size=self.batch_size)
+    def write_image_grid(self, tag, stn_images, original_images, epoch, global_step):
+        fig = image_grid(stn_images=stn_images, original_images=original_images, epoch=epoch, plot_size=self.batch_size)
         self.writer.add_figure(tag, fig, global_step=global_step)
         
     def write_theta_heatmap(self, tag, theta, epoch, global_step):
@@ -21,6 +21,16 @@ class SummaryWriterCustom(SummaryWriter):
     
     def write_scalar(self, tag, scalar_value, global_step):
         self.writer.add_scalar(tag=tag, scalar_value=scalar_value, global_step=global_step)
+
+    def write_stn_info(self, stn_images, images, thetas, epoch, it):
+        theta_v1 = thetas[0][0].cpu().detach().numpy()
+        theta_v2 = thetas[1][0].cpu().detach().numpy()
+        self.write_image_grid(tag="images", stn_images=stn_images, original_images=images, epoch=epoch, global_step=it)
+        self.write_theta_heatmap(tag="theta_v1", theta=theta_v1, epoch=epoch, global_step=it)
+        self.write_theta_heatmap(tag="theta_v2", theta=theta_v2, epoch=epoch, global_step=it)
+
+        theta_eucl_norm = np.linalg.norm(np.double(theta_v1 - theta_v2), 2)
+        self.write_scalar(tag="theta eucl. norm.", scalar_value=theta_eucl_norm, global_step=it)
 
     def close(self):
         self.writer.close()
@@ -43,7 +53,7 @@ def grad_reverse(x, scale=1.0):
     return GradientReverse.apply(x)
 
 
-def image_grid(images, original_images, epoch, plot_size=16):
+def image_grid(stn_images, original_images, epoch, plot_size=16):
     """Return a 5x5 grid of the MNIST images as a matplotlib figure."""
     # Create a figure to contain the plot.
     figure = plt.figure(figsize=(20, 50))
@@ -51,8 +61,8 @@ def image_grid(images, original_images, epoch, plot_size=16):
     num_images = min(len(original_images), plot_size)
     plt.subplots_adjust(hspace=0.5)
 
-    v1 = images[0]
-    v2 = images[1]
+    v1 = stn_images[0]
+    v2 = stn_images[1]
 
     titles = [f"orig@{epoch} epoch", "view 1", "view 2"]
     total = 0
@@ -112,3 +122,32 @@ def custom_collate(batch):
     target = [item[1] for item in batch]
     target = torch.LongTensor(target)
     return [data, target]
+
+
+def print_gradients(stn, args):
+    print("-------------------------sanity check stn grads-------------------------------")
+    
+    # backbone weights
+    if args.separate_localization_net:
+        print(stn.module.transform_net.localization_net.backbones[1].conv2d_2.weight)
+    else:
+        print(stn.module.transform_net.localization_net.backbones[0].conv2d_2.weight)
+
+    # backbone grads
+    if args.separate_localization_net:
+        print(stn.module.transform_net.localization_net.backbones[1].conv2d_2.weight.grad)
+    else:
+        print(stn.module.transform_net.localization_net.backbones[0].conv2d_2.weight.grad)
+
+    # head weights
+    if args.separate_localization_net:
+        print(stn.module.transform_net.localization_net.backbones[1].conv2d_2.weight)
+    else:
+        print(stn.module.transform_net.localization_net.backbones[0].conv2d_2.weight)
+
+    # head grads
+    print(stn.module.transform_net.localization_net.heads[0].linear2.weight.grad)
+    print(stn.module.transform_net.localization_net.heads[1].linear2.weight.grad)
+
+    print(f"CUDA MAX MEM:           {torch.cuda.max_memory_allocated()}")
+    print(f"CUDA MEM ALLOCATED:     {torch.cuda.memory_allocated()}")

@@ -30,6 +30,7 @@ import torchvision.models as models
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 import copy
+import numpy as np
 
 from models import resnet_cifar
 
@@ -127,9 +128,9 @@ parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=5000, type=int, 
+parser.add_argument("--summary_writer_freq", default=100, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
-parser.add_argument("--grad_check_freq", default=5000, type=int,
+parser.add_argument("--grad_check_freq", default=100, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
 parser.add_argument("--summary_plot_size", default=16, type=int,
                     help="Defines the number of samples to show in the summary writer.")
@@ -203,8 +204,9 @@ def main():
     if args.dataset == 'CIFAR10':
         args.epochs = 800
         args.lr = 0.03
-        #args.batch_size = 512
+        # args.batch_size = 512
         args.batch_size = 2048
+        # args.batch_size = 1024
         args.workers = 4
         args.weight_decay = 0.0005
         print(f"Changed hyperparameters for CIFAR10")
@@ -218,7 +220,6 @@ def main():
 
     with open(os.path.join(expt_sub_dir, f"args_dict_pretraining_{timestr}.yaml"), "w") as f:
         yaml.dump(args_dict, f)
-
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -286,24 +287,35 @@ def main_worker(gpu, ngpus_per_node, args):
             args.dim, 
             args.pred_dim)
 
-    #transform_net = STN(
-    #    mode=args.stn_mode,
-    #    invert_gradients=args.invert_stn_gradients,
-    #    separate_localization_net=args.separate_localization_net,
-    #    conv1_depth=args.stn_conv1_depth,
-    #    conv2_depth=args.stn_conv2_depth,
-    #    theta_norm=args.stn_theta_norm,
-    #    local_crops_number=args.local_crops_number,
-    #    global_crops_scale=args.global_crops_scale,
-    #    local_crops_scale=args.local_crops_scale,
-    #    resolution=args.stn_res,
-    #    unbounded_stn=args.use_unbounded_stn,
-    #)
-    #stn = AugmentationNetwork(
-    #    transform_net=transform_net,
-    #    resize_input=args.resize_input,
-    #    resize_size=args.resize_size,
-    #)
+    transform_net = STN(
+       mode=args.stn_mode,
+       invert_gradients=args.invert_stn_gradients,
+       separate_localization_net=args.separate_localization_net,
+       conv1_depth=args.stn_conv1_depth,
+       conv2_depth=args.stn_conv2_depth,
+       theta_norm=args.stn_theta_norm,
+       local_crops_number=args.local_crops_number,
+       global_crops_scale=args.global_crops_scale,
+       local_crops_scale=args.local_crops_scale,
+       resolution=args.stn_res,
+       unbounded_stn=args.use_unbounded_stn,
+    )
+    stn = AugmentationNetwork(
+       transform_net=transform_net,
+       resize_input=args.resize_input,
+       resize_size=args.resize_size,
+    )
+
+    sim_loss = None
+    if args.use_stn_penalty:
+        Loss = penalty_dict[args.penalty_loss]
+        sim_loss = Loss(
+            invert=args.invert_penalty,
+            resolution=32,
+            exponent=2,
+            bins=100,
+            eps=args.epsilon,
+        ).cuda()
 
     # infer learning rate before changing batch size
     init_lr = args.lr * args.batch_size / 256
@@ -312,9 +324,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.distributed:
         # Apply SyncBN
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    
-        # TODO uncomment
-        # stn = torch.nn.SyncBatchNorm.convert_sync_batchnorm(stn)
+        stn = torch.nn.SyncBatchNorm.convert_sync_batchnorm(stn)
 
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
@@ -322,9 +332,7 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.gpu is not None:
             torch.cuda.set_device(args.gpu)
             model.cuda(args.gpu)
-            
-            # TODO uncomment: 
-            # stn.cuda(args.gpu)
+            stn.cuda(args.gpu)
 
             # When using a single GPU per process and per
             # DistributedDataParallel, we need to divide the batch size
@@ -332,22 +340,20 @@ def main_worker(gpu, ngpus_per_node, args):
             args.batch_size = int(args.batch_size / ngpus_per_node)
             args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-            # TODO uncomment
-            # stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu])
+        
+            stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu])
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
             # available GPUs if device_ids are not set
             model = torch.nn.parallel.DistributedDataParallel(model)
             
-            # TODO uncomment: 
-            # stn = torch.nn.parallel.DistributedDataParallel(stn)
+            stn = torch.nn.parallel.DistributedDataParallel(stn)
 
     elif args.gpu is not None:
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
-        # TODO uncomment: 
-        # stn = stn.cuda(args.gpu)
+        stn = stn.cuda(args.gpu)
 
         # comment out the following line for debugging
         raise NotImplementedError("Only DistributedDataParallel is supported.")
@@ -356,41 +362,38 @@ def main_worker(gpu, ngpus_per_node, args):
         # this code only supports DistributedDataParallel.
         raise NotImplementedError("Only DistributedDataParallel is supported.")
     print(model) # print model after SyncBatchNorm
-    
-    # TODO uncomment: 
-    # print(stn)
+    print(stn)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CosineSimilarity(dim=1).cuda(args.gpu)
 
-    # TODO uncomment:
-    #stn_optimizer = None
-    #use_pretrained_stn = os.path.isfile(args.stn_pretrained_weights)
-    #if use_pretrained_stn:
-        #state_dict = torch.load(args.stn_pretrained_weights, map_location="cpu")
-        #msg = stn.load_state_dict(state_dict, strict=False)
-        #print(f'Pretrained weights found at {args.stn_pretrained_weights} and loaded with msg: {msg}')
+    stn_optimizer = None
+    args.use_pretrained_stn = os.path.isfile(args.stn_pretrained_weights)
+    if args.use_pretrained_stn:
+        state_dict = torch.load(args.stn_pretrained_weights, map_location="cpu")
+        msg = stn.load_state_dict(state_dict, strict=False)
+        print(f'Pretrained weights found at {args.stn_pretrained_weights} and loaded with msg: {msg}')
     
-    #    for p in stn.parameters():
-    #        p.requires_grad = False
+        for p in stn.parameters():
+            p.requires_grad = False
 
     if args.fix_pred_lr:
         optim_params = [{'params': model.module.encoder.parameters(), 'fix_lr': False},
                         {'params': model.module.predictor.parameters(), 'fix_lr': True}]
+        if not args.use_stn_optimizer and not args.use_pretrained_stn:
+            optim_params += [{'params': stn.parameters(), 'fix_lr': False}]
     else:
-        optim_params = model.parameters()
+        optim_params = list(model.parameters())
+        if not args.use_stn_optimizer and not args.use_pretrained_stn:
+            optim_params += list(stn.parameters())
 
-    # TODO uncomment:
-    #if not args.use_stn_optimizer and not use_pretrained_stn:
-        # optim_params += list(stn.parameters())
 
     optimizer = torch.optim.SGD(optim_params, init_lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-    # TODO uncomment:
-    #if args.use_stn_optimizer and not use_pretrained_stn:
-    #    stn_optimizer = torch.optim.AdamW(list(stn.parameters()), lr=args.init_stn_lr)
+    if args.use_stn_optimizer and not args.use_pretrained_stn:
+        stn_optimizer = torch.optim.AdamW(list(stn.parameters()), lr=args.init_stn_lr)
 
     
     # optionally resume from a checkpoint
@@ -412,10 +415,10 @@ def main_worker(gpu, ngpus_per_node, args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
-    writer = None
+    # writer = None
     summary_writer = None
     if args.rank == 0:
-        writer = SummaryWriter(log_dir=os.path.join(args.expt_dir, f"tensorboard_pretraining_{args.epochs}_{init_lr}"))
+        # writer = SummaryWriter(log_dir=os.path.join(args.expt_dir, f"tensorboard_pretraining_{args.epochs}_{init_lr}"))
         # TODO remove above
         summary_writer = SummaryWriterCustom(args.expt_dir / "summary", batch_size=args.batch_size)
 
@@ -432,55 +435,51 @@ def main_worker(gpu, ngpus_per_node, args):
         traindir = os.path.join(args.dataset_path, 'train')
 
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-        transform = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-            transforms.RandomApply([
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-            ], p=0.8),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.RandomApply([simsiam.loader.GaussianBlur([.1, 2.])], p=0.5),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize_imagenet,
-        ]
+        # transform = [
+        #     transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+        #     transforms.RandomApply([
+        #         transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+        #     ], p=0.8),
+        #     transforms.RandomGrayscale(p=0.2),
+        #     transforms.RandomApply([simsiam.loader.GaussianBlur([.1, 2.])], p=0.5),
+        #     transforms.RandomHorizontalFlip(),
+        #     transforms.ToTensor(),
+        #     normalize_imagenet,
+        # ]
 
-        # TODO uncomment:
-        #transform = transforms.Compose([
-                #transforms.Resize(256),
-                #transforms.CenterCrop(224),
-                #transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                #transforms.RandomGrayscale(p=0.2),
-                #transforms.RandomApply([simsiam.loader.GaussianBlur([.1, 2.])], p=0.5),
-                # #removed RandomHorizontalFlip as it is learned by the STN
-                #transforms.ToTensor(),
-                #normalize_imagenet,
-            #])
+        transform = transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.RandomApply([simsiam.loader.GaussianBlur([.1, 2.])], p=0.5),
+                #removed RandomHorizontalFlip as it is learned by the STN
+                transforms.ToTensor(),
+                normalize_imagenet,
+            ])
 
         collate_fn = None
-        # TODO: remove TwoCropsTransform
-        train_dataset = datasets.ImageFolder(traindir, simsiam.loader.TwoCropsTransform(transforms.Compose(transform)))
     
     elif args.dataset == 'CIFAR10':
-        transform = simsiam.loader.TwoCropsTransform(transforms.Compose(
-                [
-                    transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
-                    transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                    transforms.RandomGrayscale(p=0.2),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalize_cifar10,
-                ]
-            )
-        )
+        # transform = simsiam.loader.TwoCropsTransform(transforms.Compose(
+        #         [
+        #             transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
+        #             transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+        #             transforms.RandomGrayscale(p=0.2),
+        #             transforms.RandomHorizontalFlip(),
+        #             transforms.ToTensor(),
+        #             normalize_cifar10,
+        #         ]
+        #     )
+        # )
 
-        # TODO uncomment:
-        #transform = transforms.Compose([
-                #transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                #transforms.RandomGrayscale(p=0.2),  
-                # #removed RandomHorizontalFlip as it is learned by the STN
-                #transforms.ToTensor(),
-                #transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-            #])
+        transform = transforms.Compose([
+                transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                transforms.RandomGrayscale(p=0.2),  
+                #removed RandomHorizontalFlip as it is learned by the STN
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            ])
 
         collate_fn = None
         train_dataset = datasets.CIFAR10(root='datasets/CIFAR10', train=True, download=True, transform=transform)
@@ -505,18 +504,17 @@ def main_worker(gpu, ngpus_per_node, args):
         collate_fn=collate_fn
         )
 
+    global_step = 0
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, init_lr, epoch, args)
-        # TODO uncomment:
-        #if args.use_stn_optimizer and not use_pretrained_stn:
-            #adjust_learning_rate(stn_optimizer, init_lr_stn, epoch, args)
+
+        if args.use_stn_optimizer and not args.use_pretrained_stn:
+            adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, writer)
-        # TODO uncomment:
-        #train(train_loader, model, criterion, optimizer, stn_optimizer, epoch, args, writer)
+        train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, args, global_step, summary_writer, sim_loss)
 
         is_last_epoch = epoch + 1 >= args.epochs
 
@@ -531,11 +529,11 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     # shut down the writer at the end of training
-    if writer is not None and args.rank == 0:
-        writer.close()
+    if summary_writer is not None and args.rank == 0:
+        summary_writer.close()
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args, writer=None):
+def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, args, global_step, summary_writer=None, sim_loss=None):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4f')
@@ -549,60 +547,65 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer=None):
 
     end = time.time()
     for i, (images, _) in enumerate(train_loader):
+        global_step += 1
         # measure data loading time
         data_time.update(time.time() - end)
 
         if args.gpu is not None:
-            images[0] = images[0].cuda(args.gpu, non_blocking=True)
-            images[1] = images[1].cuda(args.gpu, non_blocking=True)
+            iamges = images.cuda(args.gpu, non_blocking=True)
 
-        if i % args.summary_writer_freq == 0 and args.rank == 0:
-            original_images = copy.deepcopy(images)
+        # print(images[0].shape)
 
-        #TODO uncomment:
-        #images = stn(images)
+        stn_images, thetas = stn(images)
 
-        # if not args.resize_all_inputs and args.dataset == 'ImageNet':
-            # # in the case of varying image resolutions, we could not color-augment images in DataLoader -> do it here:
-            # color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)
-            # gaussian_blur = simsiam.loader.GaussianBlur([.1, 2.])
-            # transform_view1 = transforms.Compose([
-            #   transforms.RandomApply([color_jitter], p=0.8),
-            #   transforms.RandomGrayscale(p=0.2),
-            #   transforms.RandomApply([gaussian_blur)], p=0.5),
-            #   transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-            #   transforms.ConvertImageDtype(torch.float32),
-            # ]                 
-            # transform_view2 = transforms.Compose([
-            #   transforms.RandomApply([color_jitter], p=0.8),
-            #   transforms.RandomGrayscale(p=0.2),
-            #   transforms.RandomApply([gaussian_blur)], p=0.5),
-            #   transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-            #   transforms.ConvertImageDtype(torch.float32),
-            # ]              
-            # 
-            # images[0] = transform_view1(images[0])
-            # images[1] = transform_view2(images[1])          
+        # print("len(stn_images): ", len(stn_images)) # should be 2
+        # print("stn_images: ", stn_images)
+        # print("stn_images[0].shape: ", stn_images[0].shape) # should be [batch_size, 3, 32, 32]
+        # print("stn_images[1].shape: ", stn_images[1].shape) # should be [batch_size, 3, 32, 32]
 
+        penalty = torch.tensor(0.).cuda()
+        if args.use_stn_penalty:
+            if args.penalty_loss == 'thetacropspenalty':
+                for t in thetas:
+                    penalty += sim_loss(theta=t, crops_scale=args.global_crops_scale)
+            else:
+                penalty = sim_loss(images=stn_images, target=images, theta=thetas,)
 
-        #if i % args.summary_writer_freq == 0 and args.rank == 0:
-            #summary_writer.write_image_grid(tag="images", images=images, original_images=original_images, epoch=epoch, global_step=it)
-            #summary_writer.write_theta_heatmap(tag="theta_g1", theta=stn.module.transform_net.affine_matrix_g1, epoch=epoch, global_step=it)
-            #summary_writer.write_theta_heatmap(tag="theta_g2", theta=stn.module.transform_net.affine_matrix_g2, epoch=epoch, global_step=it)
-            #summary_writer.write_theta_heatmap(tag="theta_l1", theta=stn.module.transform_net.affine_matrix_l1, epoch=epoch, global_step=it)
-            #summary_writer.write_theta_heatmap(tag="theta_l2", theta=stn.module.transform_net.affine_matrix_l2, epoch=epoch, global_step=it)
+        if not args.resize_all_inputs and args.dataset == 'ImageNet':
+            # in the case of varying image resolutions, we could not color-augment images in DataLoader -> do it here:
+            color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)
+            gaussian_blur = simsiam.loader.GaussianBlur([.1, 2.])
+            transform_view1 = transforms.Compose([
+              transforms.RandomApply([color_jitter], p=0.8),
+              transforms.RandomGrayscale(p=0.2),
+              transforms.RandomApply([gaussian_blur], p=0.5),
+              transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+              transforms.ConvertImageDtype(torch.float32),
+            ])
 
-            #theta_g_euc_norm = np.linalg.norm(np.double(stn.module.transform_net.affine_matrix_g2[0] - stn.module.transform_net.affine_matrix_g1[0]), 2)
-            #theta_l_euc_norm = np.linalg.norm(np.double(stn.module.transform_net.affine_matrix_l2[0] - stn.module.transform_net.affine_matrix_l1[0]), 2)
-            #summary_writer.write_scalar(tag="theta local eucl. norm.", scalar_value=theta_l_euc_norm, global_step=it)
-            #summary_writer.write_scalar(tag="theta global eucl. norm.", scalar_value=theta_g_euc_norm, global_step=it)
-
-            # original_images = None
+            transform_view2 = transforms.Compose([
+              transforms.RandomApply([color_jitter], p=0.8),
+              transforms.RandomGrayscale(p=0.2),
+              transforms.RandomApply([gaussian_blur], p=0.5),
+              transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+              transforms.ConvertImageDtype(torch.float32),
+            ])        
             
+            stn_images[0] = transform_view1(stn_images[0])
+            stn_images[1] = transform_view2(stn_images[1])          
+
+            # Log stuff to tensorboard
+            if global_step % args.summary_writer_freq == 0 and args.rank == 0:
+                summary_writer.write_stn_info(stn_images, images, thetas, epoch, global_step)
+        
+        # print("stn_images[0].shape (should be [batch_size, 3, 32, 32]: ", stn_images[0].shape)
+        # print("images.shape (should be [batch_size, 3, 32, 32])", images.shape)
+        # print("images[0].shape (should be [3, 32, 32]): ", images[0].shape) 
 
         # compute output and loss
-        p1, p2, z1, z2 = model(x1=images[0], x2=images[1])
+        p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
         loss = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
+        loss += penalty
 
         losses.update(loss.item(), images[0].size(0))
 
@@ -611,9 +614,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer=None):
         loss.backward()
         optimizer.step()
 
-        # TODO uncomment:
-        #if args.use_stn_optimizer and not use_pretrained_stn:
-        #   stn_optimizer.step()
+        if args.use_stn_optimizer and not args.use_pretrained_stn:
+            stn_optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -624,24 +626,17 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer=None):
         
         # write log epoch-wise
         if args.rank == 0:
-            writer.add_scalar('Pre-training/Loss', loss.item(), epoch + 1)
-            # TODO uncomment:
-            #summary_writer.write_scalar(tag="loss", scalar_value=loss.item(), global_step=it)
-            #summary_writer.write_scalar(tag="lr", scalar_value=optimizer.param_groups[0]["lr"], global_step=it)
+            summary_writer.write_scalar(tag="loss", scalar_value=loss.item(), global_step=global_step)
+            summary_writer.write_scalar(tag="lr", scalar_value=optimizer.param_groups[0]["lr"], global_step=global_step)
 
-            #if args.use_stn_optimizer and not use_pretrained_stn:
-            #   summary_writer.write_scalar(tag="stn lr", scalar_value=stn_optimizer.param_groups[0]["lr"], global_step=it)
+            if args.use_stn_optimizer and not args.use_pretrained_stn:
+                summary_writer.write_scalar(tag="lr stn", scalar_value=stn_optimizer.param_groups[0]["lr"], global_step=global_step)
 
-        # if args.rank == 0 and i % args.grad_check_freq == 0:
-                #print("-------------------------sanity check stn grads-------------------------------")
-                #print(stn.module.transform_net.fc_localization_view1.linear2.weight.grad)
-                #print(stn.module.transform_net.fc_localization_view2.linear2.weight.grad)
-                #print(stn.module.transform_net.localization_net.conv2d_2.weight.grad)
-                #print(f"CUDA MAX MEM:           {torch.cuda.max_memory_allocated()}")
-                #print(f"CUDA MEM ALLOCATED:     {torch.cuda.memory_allocated()}")
+            if global_step % args.grad_check_freq == 0:
+                utils.print_gradients(stn, args)
 
-        #if args.use_stn_optimizer and not use_pretrained_stn:
-        #   stn_optimizer.zero_grad()
+        if args.use_stn_optimizer and not args.use_pretrained_stn:
+            stn_optimizer.zero_grad()
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
