@@ -409,11 +409,21 @@ def main_worker(gpu, ngpus_per_node, args):
                 checkpoint = torch.load(args.resume, map_location=loc)
             
             model.load_state_dict(checkpoint['state_dict'])
+            print(f"=> loaded backbone weights.")
             if args.warmstart_backbone:
-                print(f"=> Warmstarting backbone from checkpoint '{args.resume}' (start epoch 0)")
+                # assumes that, once backbone is warmstarted and checkpoint for warmstarted run is saved, 
+                # this flag is set to False to load everything normally
+                print(f"=> warmstarting backbone from checkpoint '{args.resume}' (start epoch 0)")
             else:
                 args.start_epoch = checkpoint['epoch']
                 optimizer.load_state_dict(checkpoint['optimizer'])
+                print(f"=> loaded optimizer.")
+                stn.load_state_dict(checkpoint['stn'])
+                print(f"=> loaded stn weights.")
+                if stn_optimizer:
+                    stn_optimizer.load_state_dict(checkpoint['stn_optimizer'])
+                    print(f"=> loaded stn optimizer.")
+                    
                 print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
@@ -527,6 +537,8 @@ def main_worker(gpu, ngpus_per_node, args):
                     'arch': args.arch,
                     'state_dict': model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
+                    'stn': stn.state_dict(),
+                    'stn_optimizer': stn_optimizer.state_dict() if stn_optimizer else None,
                 }, is_best=False, filename=os.path.join(args.expt_dir, 'checkpoint_{:04d}.pth.tar'.format(epoch)))
 
 
