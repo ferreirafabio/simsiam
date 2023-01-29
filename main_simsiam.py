@@ -177,6 +177,7 @@ parser.add_argument('--local_crops_number', type=int, default=0,
 parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05, 0.4),
                     help="""Scale range of the cropped image before resizing, relatively to the origin image.
                     Used for small local view cropping of multi-crop.""")
+parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag, help="used to load an already trained backbone and set start_epoch to 0.")
 
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
@@ -406,11 +407,14 @@ def main_worker(gpu, ngpus_per_node, args):
                 # Map model to be loaded to specified single gpu.
                 loc = 'cuda:{}'.format(args.gpu)
                 checkpoint = torch.load(args.resume, map_location=loc)
-            args.start_epoch = checkpoint['epoch']
+            
             model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+            if args.warmstart_backbone:
+                print(f"=> Warmstarting backbone from checkpoint '{args.resume}' (start epoch 0)")
+            else:
+                args.start_epoch = checkpoint['epoch']
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
