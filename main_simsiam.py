@@ -178,6 +178,7 @@ parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05,
                     help="""Scale range of the cropped image before resizing, relatively to the origin image.
                     Used for small local view cropping of multi-crop.""")
 parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag, help="used to load an already trained backbone and set start_epoch to 0.")
+parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
 
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
@@ -394,9 +395,12 @@ def main_worker(gpu, ngpus_per_node, args):
                                 weight_decay=args.weight_decay)
 
     if args.use_stn_optimizer and not args.use_pretrained_stn:
-        stn_optimizer = torch.optim.AdamW(list(stn.parameters()), lr=args.init_stn_lr)
-
-    
+        stn_optimizer = torch.optim.SGD(params=list(stn.parameters()), 
+                                        lr=args.init_stn_lr,
+                                        momentum=args.momentum,
+                                        weight_decay=args.weight_decay
+                                        )
+                                        
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
@@ -614,7 +618,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
         # compute output and loss
         p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
         loss = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
-        loss += penalty
+        loss += (penalty * args.penalty_weight)
 
         losses.update(loss.item(), images[0].size(0))
 
