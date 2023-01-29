@@ -128,9 +128,9 @@ parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=25, type=int, 
+parser.add_argument("--summary_writer_freq", default=10, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
-parser.add_argument("--grad_check_freq", default=25, type=int,
+parser.add_argument("--grad_check_freq", default=50, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
 parser.add_argument("--summary_plot_size", default=16, type=int,
                     help="Defines the number of samples to show in the summary writer.")
@@ -512,7 +512,7 @@ def main_worker(gpu, ngpus_per_node, args):
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, args, global_step, summary_writer, sim_loss)
+        global_step = train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, args, global_step, summary_writer, sim_loss)
 
         is_last_epoch = epoch + 1 >= args.epochs
 
@@ -527,7 +527,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     # shut down the writer at the end of training
-    if summary_writer is not None and args.rank == 0:
+    if summary_writer and args.rank == 0:
         summary_writer.close()
 
 
@@ -545,7 +545,6 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
 
     end = time.time()
     for i, (images, _) in enumerate(train_loader):
-        global_step += 1
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -591,10 +590,6 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
             
             stn_images[0] = transform_view1(stn_images[0])
             stn_images[1] = transform_view2(stn_images[1])          
-
-        # Log stuff to tensorboard
-        if epoch % args.summary_writer_freq == 0 and args.rank == 0:
-            summary_writer.write_stn_info(stn_images, images, thetas, epoch, global_step)
         
         # print("stn_images[0].shape (should be [batch_size, 3, 32, 32]: ", stn_images[0].shape)
         # print("images.shape (should be [batch_size, 3, 32, 32])", images.shape)
@@ -609,6 +604,10 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
+
+        if args.use_stn_optimizer and not args.use_pretrained_stn:
+            stn_optimizer.zero_grad()
+
         loss.backward()
         optimizer.step()
 
@@ -618,23 +617,30 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-
-        if args.rank == 0 and i % args.print_freq == 0:
-            progress.display(i)
         
-        # write log epoch-wise
+        # write log
         if args.rank == 0:
-            summary_writer.write_scalar(tag="loss", scalar_value=loss.item(), global_step=global_step)
-            summary_writer.write_scalar(tag="lr", scalar_value=optimizer.param_groups[0]["lr"], global_step=global_step)
+ 
+            summary_writer.write_scalar(tag="loss", scalar_value=loss.item(), epoch=epoch+1)
+            summary_writer.write_scalar(tag="lr", scalar_value=optimizer.param_groups[0]["lr"], epoch=epoch+1)
+            
+            if sim_loss:
+                summary_writer.write_scalar(tag="penalty loss", scalar_value=penalty.item(), epoch=epoch+1)
 
             if args.use_stn_optimizer and not args.use_pretrained_stn:
-                summary_writer.write_scalar(tag="lr stn", scalar_value=stn_optimizer.param_groups[0]["lr"], global_step=global_step)
+                summary_writer.write_scalar(tag="lr stn", scalar_value=stn_optimizer.param_groups[0]["lr"], epoch=epoch+1)
 
-            if global_step % args.grad_check_freq == 0:
+            if epoch % args.grad_check_freq == 0 and i == 0:
                 utils.print_gradients(stn, args)
+            
+            if i % args.print_freq == 0:
+                progress.display(i)
 
-        if args.use_stn_optimizer and not args.use_pretrained_stn:
-            stn_optimizer.zero_grad()
+            # Log stuff to tensorboard
+            if epoch % args.summary_writer_freq == 0 and i == 0:
+                summary_writer.write_stn_info(stn_images, images, thetas, epoch+1)
+
+    return global_step
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)

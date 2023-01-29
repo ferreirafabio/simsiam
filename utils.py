@@ -11,26 +11,26 @@ class SummaryWriterCustom(SummaryWriter):
         self.plot_size = plot_size
         self.writer = SummaryWriter(out_path)
 
-    def write_image_grid(self, tag, stn_images, original_images, epoch, global_step):
+    def write_image_grid(self, tag, stn_images, original_images, epoch):
         fig = image_grid(stn_images=stn_images, original_images=original_images, epoch=epoch, plot_size=self.plot_size)
-        self.writer.add_figure(tag, fig, global_step=global_step)
+        self.writer.add_figure(tag, fig, global_step=epoch)
         
-    def write_theta_heatmap(self, tag, theta, epoch, global_step):
+    def write_theta_heatmap(self, tag, theta, epoch):
         fig = theta_heatmap(theta, epoch)
-        self.writer.add_figure(tag, fig, global_step=global_step)
+        self.writer.add_figure(tag, fig, global_step=epoch)
     
-    def write_scalar(self, tag, scalar_value, global_step):
-        self.writer.add_scalar(tag=tag, scalar_value=scalar_value, global_step=global_step)
+    def write_scalar(self, tag, scalar_value, epoch):
+        self.writer.add_scalar(tag=tag, scalar_value=scalar_value, global_step=epoch)
 
-    def write_stn_info(self, stn_images, images, thetas, epoch, it):
+    def write_stn_info(self, stn_images, images, thetas, epoch):
         theta_v1 = thetas[0][0].cpu().detach().numpy()
         theta_v2 = thetas[1][0].cpu().detach().numpy()
-        self.write_image_grid(tag="images", stn_images=stn_images, original_images=images, epoch=epoch, global_step=it)
-        self.write_theta_heatmap(tag="theta_v1", theta=theta_v1, epoch=epoch, global_step=it)
-        self.write_theta_heatmap(tag="theta_v2", theta=theta_v2, epoch=epoch, global_step=it)
+        self.write_image_grid(tag="images", stn_images=stn_images, original_images=images, epoch=epoch)
+        self.write_theta_heatmap(tag="theta_v1", theta=theta_v1, epoch=epoch)
+        self.write_theta_heatmap(tag="theta_v2", theta=theta_v2, epoch=epoch)
 
         theta_eucl_norm = np.linalg.norm(np.double(theta_v1 - theta_v2), 2)
-        self.write_scalar(tag="theta eucl. norm.", scalar_value=theta_eucl_norm, global_step=it)
+        self.write_scalar(tag="theta eucl. norm.", scalar_value=theta_eucl_norm, epoch=epoch)
 
     def close(self):
         self.writer.close()
