@@ -202,7 +202,7 @@ def main():
     assert args.local_crops_number == 0, "SimSiam only uses two views, so local_crops_number must be 0"
 
     if args.dataset == 'CIFAR10':
-        args.epochs = 800
+        args.epochs = 300
         args.lr = 0.03
         # args.batch_size = 512
         # args.batch_size = 1024
@@ -557,7 +557,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
     meters = [batch_time, data_time, simsiam_loss]
 
     if sim_loss:
-       penalty_loss_meter = AverageMeter('Penalty Loss', ':.4f')
+       penalty_loss_meter = AverageMeter('Penalty Loss', ':.6f')
        meters.append(penalty_loss_meter)    
 
     meters.append(total_loss)

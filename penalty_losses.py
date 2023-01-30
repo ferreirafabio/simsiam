@@ -171,11 +171,12 @@ class ThetaLoss(nn.Module):
         self.loss_fn = nn.MSELoss()
 
     def forward(self, theta, **args):
-        identity = torch.tensor([[[1, 0, 0], [0, 1, 0]]], dtype=torch.float, device=theta[0].get_device())
+        # create identity tensor of shape [batch_size,2,3]
+        identity = torch.tensor([[[1, 0, 0], [0, 1, 0]]], dtype=torch.float, device=theta[0].get_device()).repeat(theta[0].shape[0], 1, 1)
         loss = 0
         for t in theta:
             loss = loss + self.loss_fn(t, identity)
-        return self.eps * loss
+        return self.eps * (loss/theta[0].shape[0]*2)
 
 
 class GridLoss(nn.Module):
