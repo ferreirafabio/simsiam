@@ -182,7 +182,6 @@ class STN(nn.Module):
 
         self.gmin_scale = math.pow(self.global_crops_scale[0], .25)
         self.gmax_scale = math.pow(self.global_crops_scale[1], .25)
-        self.gmin_txy = self.gmin_scale - 1
         self.gmax_txy = 1 - self.gmin_scale
 
         self.lmin_scale = math.pow(self.local_crops_scale[0], .25)

@@ -150,9 +150,7 @@ parser.add_argument("--stn_conv2_depth", default=32, type=int,
                     help="Specifies the number of feature maps of conv2 for the STN localization network (default: 32).")
 parser.add_argument("--stn_theta_norm", default=False, type=utils.bool_flag,
                     help="Set this flag to normalize 'theta' in the STN before passing to affine_grid(theta, ...). Fixes the problem with cropping of the images (black regions)")
-parser.add_argument("--use_stn_penalty", default=False, type=utils.bool_flag,
-                    help="Set this flag to add a penalty term to the loss. Similarity between input and output image of STN.")
-parser.add_argument("--penalty_loss", default="simloss", type=str, choices=list(penalty_dict.keys()),
+parser.add_argument("--penalty_loss", default="", type=str, choices=list(penalty_dict.keys()),
                     help="Specify the name of the similarity to use.")
 parser.add_argument("--epsilon", default=1., type=float,
                     help="Scalar for the penalty loss")
@@ -309,7 +307,7 @@ def main_worker(gpu, ngpus_per_node, args):
     )
 
     sim_loss = None
-    if args.use_stn_penalty:
+    if args.penalty_loss:
         Loss = penalty_dict[args.penalty_loss]
         sim_loss = Loss(
             invert=args.invert_penalty,
@@ -581,7 +579,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
         # print("stn_images[1].shape: ", stn_images[1].shape) # should be [batch_size/n_gpus, 3, 32, 32]
 
         penalty = torch.tensor(0.).cuda()
-        if args.use_stn_penalty:
+        if sim_loss:
             if args.penalty_loss == 'thetacropspenalty':
                 for t in thetas:
                     penalty += sim_loss(theta=t, crops_scale=args.global_crops_scale)
