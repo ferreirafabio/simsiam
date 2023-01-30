@@ -514,7 +514,7 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, 
         pin_memory=True, 
         sampler=train_sampler, 
-        drop_last=True, 
+        drop_last=False, 
         collate_fn=collate_fn
         )
 
@@ -630,7 +630,9 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
 
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))
-        penalty_loss_meter.update(penalty_l.item(), images[0].size(0))
+        
+        if sim_loss:
+            penalty_loss_meter.update(penalty_l.item(), images[0].size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
