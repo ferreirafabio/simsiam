@@ -552,10 +552,19 @@ def main_worker(gpu, ngpus_per_node, args):
 def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, args, global_step, summary_writer=None, sim_loss=None):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4f')
+    simsiam_loss = AverageMeter('SimSiam Loss', ':.4f')
+    total_loss = AverageMeter('Total Loss', ':.4f')
+    meters = [batch_time, data_time, simsiam_loss]
+
+    if sim_loss:
+       penalty_loss_meter = AverageMeter('Penalty Loss', ':.4f')
+       meters.append(penalty_loss_meter)    
+
+    meters.append(total_loss)
+    
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses],
+        meters,
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
@@ -615,10 +624,13 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
 
         # compute output and loss
         p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
-        loss = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
-        loss += (penalty * args.penalty_weight)
+        simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
+        penalty_l = penalty * args.penalty_weight
+        total_l = simsiam_l + penalty_l
 
-        losses.update(loss.item(), images[0].size(0))
+        total_loss.update(total_l.item(), images[0].size(0))
+        simsiam_loss.update(simsiam_l.item(), images[0].size(0))
+        penalty_loss_meter.update(penalty_l.item(), images[0].size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -626,7 +638,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
         if args.use_stn_optimizer and not args.use_pretrained_stn:
             stn_optimizer.zero_grad()
 
-        loss.backward()
+        total_l.backward()
         optimizer.step()
 
         if args.use_stn_optimizer and not args.use_pretrained_stn:
@@ -639,11 +651,12 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
         # write log
         if args.rank == 0:
  
-            summary_writer.write_scalar(tag="loss", scalar_value=loss.item(), epoch=epoch+1)
+            summary_writer.write_scalar(tag="Total Loss", scalar_value=total_l.item(), epoch=epoch+1)
+            summary_writer.write_scalar(tag="SimSiam Loss", scalar_value=simsiam_l.item(), epoch=epoch+1)
             summary_writer.write_scalar(tag="lr", scalar_value=optimizer.param_groups[0]["lr"], epoch=epoch+1)
             
             if sim_loss:
-                summary_writer.write_scalar(tag="penalty loss", scalar_value=penalty.item(), epoch=epoch+1)
+                summary_writer.write_scalar(tag="Penalty Loss", scalar_value=penalty.item(), epoch=epoch+1)
 
             if args.use_stn_optimizer and not args.use_pretrained_stn:
                 summary_writer.write_scalar(tag="lr stn", scalar_value=stn_optimizer.param_groups[0]["lr"], epoch=epoch+1)
