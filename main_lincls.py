@@ -482,7 +482,8 @@ def validate(val_loader, model, criterion, args, writer, epoch):
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
-        writer.write_scalar('acc1', top1.avg, epoch)
+        if args.rank == 0:
+            writer.write_scalar('acc1', top1.avg, epoch)
 
     return top1.avg
 
