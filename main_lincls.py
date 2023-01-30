@@ -372,7 +372,7 @@ def main_worker(gpu, ngpus_per_node, args):
         # evaluate on validation set
         acc1 = validate(val_loader, model, criterion, args)
         if args.rank == 0:
-            writer.write_scalar('acc1 (avg)', acc1, epoch)
+            writer.add_scalar('acc1 (avg)', acc1, epoch)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
