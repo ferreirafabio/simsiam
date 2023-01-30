@@ -124,11 +124,9 @@ def main():
 
     if args.dataset == 'CIFAR10':
         args.epochs = 90
-        #args.lr = 0.03
         args.lr = 0.1
-        args.batch_size = 512
+        args.batch_size = 2048
         args.workers = 4
-        # args.weight_decay = 0.0005
         args.weight_decay = 0.0
         print(f"Changed hyperparameters for CIFAR10")
 
