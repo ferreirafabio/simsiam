@@ -23,12 +23,12 @@ class SummaryWriterCustom(SummaryWriter):
     def write_scalar(self, tag, scalar_value, epoch):
         self.writer.add_scalar(tag=tag, scalar_value=scalar_value, global_step=epoch)
 
-    def write_stn_info(self, stn_images, images, thetas, epoch):
+    def write_stn_info(self, stn_images, images, thetas, epoch, tag_images, tag_thetas):
         theta_v1 = thetas[0][0].cpu().detach().numpy()
         theta_v2 = thetas[1][0].cpu().detach().numpy()
-        self.write_image_grid(tag="images", stn_images=stn_images, original_images=images, epoch=epoch)
-        self.write_theta_heatmap(tag="theta_v1", theta=theta_v1, epoch=epoch)
-        self.write_theta_heatmap(tag="theta_v2", theta=theta_v2, epoch=epoch)
+        self.write_image_grid(tag=tag_images, stn_images=stn_images, original_images=images, epoch=epoch)
+        self.write_theta_heatmap(tag=tag_thetas + " v1", theta=theta_v1, epoch=epoch)
+        self.write_theta_heatmap(tag=tag_thetas + " v2", theta=theta_v2, epoch=epoch)
         try: # TODO: analyse "numpy.linalg.LinAlgError: SVD did not converge" error
             theta_eucl_norm = np.linalg.norm(np.double(theta_v1 - theta_v2), 2)
         except Exception as e:

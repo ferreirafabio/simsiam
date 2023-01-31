@@ -671,12 +671,14 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
         
         # write log
         if args.rank == 0:
- 
-            summary_writer.write_scalar(tag="Total Loss", scalar_value=total_l.item(), epoch=epoch+1)
-            summary_writer.write_scalar(tag="SimSiam Loss", scalar_value=simsiam_l.item(), epoch=epoch+1)
-            summary_writer.write_scalar(tag="lr", scalar_value=optimizer.param_groups[0]["lr"], epoch=epoch+1)
+            tag_loss = "Total Loss (frozen STN)" if args.use_pretrained_stn else "Total Loss (training STN)"
+            tag_loss_simsiam = "SimSiam Loss (frozen STN)" if args.use_pretrained_stn else "SimSiam Loss (training STN)"
+            tag_lr = "lr (frozen STN)" if args.use_pretrained_stn else "lr (training STN)"
+            summary_writer.write_scalar(tag=tag_loss, scalar_value=total_l.item(), epoch=epoch+1)
+            summary_writer.write_scalar(tag=tag_loss_simsiam, scalar_value=simsiam_l.item(), epoch=epoch+1)
+            summary_writer.write_scalar(tag=tag_lr, scalar_value=optimizer.param_groups[0]["lr"], epoch=epoch+1)
             
-            if sim_loss:
+            if sim_loss and not args.use_pretrained_stn:
                 summary_writer.write_scalar(tag="Penalty Loss", scalar_value=penalty.item(), epoch=epoch+1)
 
             if args.use_stn_optimizer and not args.use_pretrained_stn:
@@ -690,7 +692,9 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
 
             # Log stuff to tensorboard
             if epoch % args.summary_writer_freq == 0 and i == 0:
-                summary_writer.write_stn_info(stn_images, images, thetas, epoch+1)
+                tag_images = "images (frozen STN)" if args.use_pretrained_stn else "images (training STN)"
+                tag_thetas = "theta (frozen STN)" if args.use_pretrained_stn else "theta (training STN)"
+                summary_writer.write_stn_info(stn_images, images, thetas, epoch+1, tag_images=tag_images, tag_thetas=tag_thetas)
 
     return global_step
 
