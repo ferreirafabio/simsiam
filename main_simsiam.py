@@ -70,28 +70,26 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=100, type=int, metavar='N',
+parser.add_argument('--epochs', default=800, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=512, type=int,
+parser.add_argument('-b', '--batch-size', default=2048, type=int,
                     metavar='N',
                     help='mini-batch size (default: 512), this is the total '
                          'batch size of all GPUs on the current node when '
                          'using Data Parallel or Distributed Data Parallel')
-parser.add_argument('--lr', '--learning-rate', default=0.05, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                     metavar='LR', help='initial (base) learning rate', dest='lr')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum of SGD solver')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+parser.add_argument('--wd', '--weight-decay', default=0.0005, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
 parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
@@ -110,7 +108,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
-parser.add_argument('--dataset', default='ImageNet', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
+parser.add_argument('--dataset', default='s', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
 parser.add_argument('--expt-name', default='default_experiment', type=str, help='Name of the experiment')
 parser.add_argument('--save-freq', default=10, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
 
@@ -178,17 +176,27 @@ parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05,
 parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag, help="used to load an already trained backbone and set start_epoch to 0.")
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
 
+parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH',
+                    help='')
+
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
                     help='feature dimension (default: 2048)')
 parser.add_argument('--pred-dim', default=512, type=int,
                     help='hidden dimension of the predictor (default: 512)')
 parser.add_argument('--fix-pred-lr', action='store_true',
-                    help='Fix learning rate for the predictor')
+                    help="""Path to pretrained weights of the STN network. 
+                    "If specified, the STN is not trained and used to 
+                    "pre-process images solely.""")
 
 
-def main():
+def main(kwargs=None):
     args = parser.parse_args()
+
+    # overload args with kwargs
+    if kwargs:
+        for k, v in vars(kwargs).items():
+            setattr(args, k, v)
 
     # Saving checkpoint and config pased on experiment mode
     expt_dir = "experiments"
@@ -200,16 +208,6 @@ def main():
         os.makedirs(expt_sub_dir)
 
     assert args.local_crops_number == 0, "SimSiam only uses two views, so local_crops_number must be 0"
-
-    if args.dataset == 'CIFAR10':
-        args.epochs = 300
-        args.lr = 0.03
-        # args.batch_size = 512
-        # args.batch_size = 1024
-        args.batch_size = 2048
-        args.workers = 4
-        args.weight_decay = 0.0005
-        print(f"Changed hyperparameters for CIFAR10")
 
     if args.stn_color_augment:
         print("setting stn_color_augment to True has no effect since we always color augment in SimSiam.")
@@ -368,14 +366,6 @@ def main_worker(gpu, ngpus_per_node, args):
     criterion = nn.CosineSimilarity(dim=1).cuda(args.gpu)
 
     stn_optimizer = None
-    args.use_pretrained_stn = os.path.isfile(args.stn_pretrained_weights)
-    if args.use_pretrained_stn:
-        state_dict = torch.load(args.stn_pretrained_weights, map_location="cpu")
-        msg = stn.load_state_dict(state_dict, strict=False)
-        print(f'Pretrained weights found at {args.stn_pretrained_weights} and loaded with msg: {msg}')
-    
-        for p in stn.parameters():
-            p.requires_grad = False
 
     if args.fix_pred_lr:
         optim_params = [{'params': model.module.encoder.parameters(), 'fix_lr': False},
@@ -398,38 +388,60 @@ def main_worker(gpu, ngpus_per_node, args):
                                         momentum=args.momentum,
                                         weight_decay=args.weight_decay
                                         )
-                                        
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
-            
-            model.load_state_dict(checkpoint['state_dict'])
-            print(f"=> loaded backbone weights.")
-            if args.warmstart_backbone:
-                # assumes that, once backbone is warmstarted and checkpoint for warmstarted run is saved, 
-                # this flag is set to False to load everything normally
-                print(f"=> warmstarting backbone from checkpoint '{args.resume}' (start epoch 0)")
-            else:
-                args.start_epoch = checkpoint['epoch']
-                optimizer.load_state_dict(checkpoint['optimizer'])
-                print(f"=> loaded optimizer.")
-                stn.load_state_dict(checkpoint['stn'])
-                print(f"=> loaded stn weights.")
-                if stn_optimizer:
-                    stn_optimizer.load_state_dict(checkpoint['stn_optimizer'])
-                    print(f"=> loaded stn optimizer.")
-                    
-                print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
 
+    base_checkpoint_name = "checkpoint_frozen_stn" if args.use_pretrained_stn else "checkpoint_training_stn"
+    checkpoint_to_resume = os.path.join(args.expt_dir, base_checkpoint_name + ".pth.tar")
+    first_time_frozen_stn = False
+
+    # if we want to train with frozen STN weights but no checkpoint of this run exists yet -> load stn training checkpoint
+    if not os.path.isfile(checkpoint_to_resume):
+        checkpoint_to_resume = os.path.join(args.expt_dir, "checkpoint_training_stn.pth.tar")
+        print("no frozen STN weights-training checkpoint found, loading STN training checkpoint instead.")
+        first_time_frozen_stn = True
+    
+    # optionally resume from a checkpoint
+    if os.path.isfile(checkpoint_to_resume):
+        print("=> loading checkpoint '{}'".format(checkpoint_to_resume))
+        if args.gpu is None:
+            checkpoint = torch.load(checkpoint_to_resume)
+        else:
+            # Map model to be loaded to specified single gpu.
+            loc = 'cuda:{}'.format(args.gpu)
+            checkpoint = torch.load(checkpoint_to_resume, map_location=loc)
+        
+        model.load_state_dict(checkpoint['state_dict'])
+        print(f"=> loaded backbone weights.")
+
+        stn.load_state_dict(checkpoint['stn'])
+        print(f"=> loaded stn weights.")
+
+        # loading the old optimizer isn't possible since we optimize fewer parameters when running
+        # frozen stn mode
+        if not first_time_frozen_stn:
+            args.start_epoch = checkpoint['epoch']
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            print(f"=> loaded optimizer.")
+
+        
+        if stn_optimizer:
+            stn_optimizer.load_state_dict(checkpoint['stn_optimizer'])
+            print(f"=> loaded stn optimizer.")
+        
+        if not args.use_pretrained_stn:
+            print(f"=> loaded checkpoint (epoch {checkpoint['epoch']}).")
+
+        if args.use_pretrained_stn:
+            for p in stn.parameters():
+                p.requires_grad = False
+            print(f"=> stn weights frozen.")
+            if first_time_frozen_stn:
+                    args.start_epoch = 0
+    else:
+        if args.use_pretrained_stn:
+            print("=> no checkpoint found to resume from. Starting fresh training with frozen STN weights.")
+        else:
+            print("=> no checkpoint found to resume from. Starting fresh STN training.")
+        
     cudnn.benchmark = True
     # writer = None
     summary_writer = None
@@ -532,16 +544,23 @@ def main_worker(gpu, ngpus_per_node, args):
 
         is_last_epoch = epoch + 1 >= args.epochs
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-            if epoch % args.save_freq == 0 or is_last_epoch:
-                save_checkpoint({
+        save_dict = {
                     'epoch': epoch + 1,
                     'arch': args.arch,
                     'state_dict': model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
                     'stn': stn.state_dict(),
                     'stn_optimizer': stn_optimizer.state_dict() if stn_optimizer else None,
-                }, is_best=False, filename=os.path.join(args.expt_dir, 'checkpoint_{:04d}.pth.tar'.format(epoch)))
+                }
+
+        checkpoint_filename_epoch_wise = os.path.join(args.expt_dir, base_checkpoint_name + f'_{epoch:04d}.pth.tar')
+
+        if args.rank == 0:
+            save_checkpoint(save_dict, is_best=False, filename=os.path.join(args.expt_dir, base_checkpoint_name + ".pth.tar"))
+
+        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+            if epoch % args.save_freq == 0 or is_last_epoch:
+                save_checkpoint(save_dict, is_best=False, filename=checkpoint_filename_epoch_wise)
 
 
     # shut down the writer at the end of training
@@ -565,7 +584,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
     progress = ProgressMeter(
         len(train_loader),
         meters,
-        prefix="Epoch: [{}]".format(epoch))
+        prefix="Epoch: [{}/{}]".format(epoch, args.epochs-1))
 
     # switch to train mode
     model.train()

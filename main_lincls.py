@@ -96,7 +96,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
-parser.add_argument('--dataset', default='ImageNet', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
+parser.add_argument('--dataset', default='CIFAR10', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
 parser.add_argument('--expt-name', default='default_experiment', type=str, help='Name of the experiment')
 parser.add_argument('--save-freq', default=10, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
 
@@ -110,8 +110,12 @@ parser.add_argument('--lars', action='store_true',
 best_acc1 = 0
 
 
-def main():
+def main(kwargs=None):
     args = parser.parse_args()
+
+    if kwargs:
+        for k, v in vars(kwargs).items():
+            setattr(args, k, v)
 
     # Saving checkpoint and config pased on experiment mode
     expt_dir = "experiments"
@@ -231,6 +235,7 @@ def main_worker(gpu, ngpus_per_node, args):
             print("=> loaded pre-trained model '{}'".format(args.pretrained))
         else:
             print("=> no checkpoint found at '{}'".format(args.pretrained))
+            exit()
 
     # infer learning rate before changing batch size
     init_lr = args.lr * args.batch_size / 256
@@ -358,7 +363,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     if args.evaluate:
-        validate(val_loader, model, criterion, args, writer, epoch)
+        validate(val_loader, model, criterion, args)
         return
 
     for epoch in range(args.start_epoch, args.epochs):
@@ -370,7 +375,9 @@ def main_worker(gpu, ngpus_per_node, args):
         train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args, writer, epoch)
+        acc1 = validate(val_loader, model, criterion, args)
+        if args.rank == 0:
+            writer.add_scalar('acc1 (avg)', acc1, epoch)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -398,7 +405,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     progress = ProgressMeter(
         len(train_loader),
         [batch_time, data_time, losses, top1, top5],
-        prefix="Epoch: [{}]".format(epoch))
+        prefix="Epoch: [{}/{}]".format(epoch, args.epochs-1))
 
     """
     Switch to eval mode:
@@ -441,7 +448,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             progress.display(i)
 
 
-def validate(val_loader, model, criterion, args, writer, epoch):
+def validate(val_loader, model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -479,10 +486,7 @@ def validate(val_loader, model, criterion, args, writer, epoch):
                 progress.display(i)
 
         # TODO: this should also be done with the ProgressMeter
-        print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
-              .format(top1=top1, top5=top5))
-
-        writer.write_scalar('acc1', top1.avg, epoch)
+        print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
 
     return top1.avg
 

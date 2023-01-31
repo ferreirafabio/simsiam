@@ -16,6 +16,8 @@ N_PARAMS = {
     'rotation_translation': 3,
     'rotation_translation_scale': 5,
     'rotation_translation_scale_symmetric': 4,
+    'rotation_translation_scale_symmetric_limited_03': 4,
+    'rotation_translation_scale_symmetric_limited_05': 4,
     'scale': 2,
     'scale_symmetric': 1,
     'translation': 2,
@@ -31,6 +33,8 @@ IDENT_TENSORS = {
     'rotation_translation': [0, 0, 0],
     'rotation_translation_scale': [0, 0, 0, 1, 1],
     'rotation_translation_scale_symmetric': [0, 0, 0, 1],
+    'rotation_translation_scale_symmetric_limited_03': [0, 0, 0, 1],
+    'rotation_translation_scale_symmetric_limited_05': [0, 0, 0, 1],
     'scale': [1, 1],
     'scale_symmetric': [1],
     'translation': [0, 0],
@@ -265,6 +269,13 @@ class STN(nn.Module):
             b *= sx
             c *= sy
             d *= sy
+
+        if 'limited' in self.mode:
+            if 'limited_05' in self.mode:
+                limit = 0.5                
+            elif 'limited_03' in self.mode:
+                limit = 0.3
+            a, b, tx, c, d, ty = [torch.mul(val, limit) for val in [a, b, tx, c, d, ty]]
 
         out[:, 0, 0] = a
         out[:, 0, 1] = b
