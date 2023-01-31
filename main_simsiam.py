@@ -113,7 +113,7 @@ parser.add_argument('--expt-name', default='default_experiment', type=str, help=
 parser.add_argument('--save-freq', default=10, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
 
 # STN
-parser.add_argument("--invert_stn_gradients", default=False, type=utils.bool_flag,
+parser.add_argument("--invert_stn_gradients", default=True, type=utils.bool_flag,
                     help="Set this flag to invert the gradients used to learn the STN")
 parser.add_argument("--use_stn_optimizer", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate optimizer for the STN parameters; "
@@ -146,7 +146,7 @@ parser.add_argument("--stn_conv1_depth", default=32, type=int,
                     help="Specifies the number of feature maps of conv1 for the STN localization network (default: 32).")
 parser.add_argument("--stn_conv2_depth", default=32, type=int,
                     help="Specifies the number of feature maps of conv2 for the STN localization network (default: 32).")
-parser.add_argument("--stn_theta_norm", default=False, type=utils.bool_flag,
+parser.add_argument("--stn_theta_norm", default=True, type=utils.bool_flag,
                     help="Set this flag to normalize 'theta' in the STN before passing to affine_grid(theta, ...). Fixes the problem with cropping of the images (black regions)")
 parser.add_argument("--penalty_loss", default="", type=str, choices=list(penalty_dict.keys()),
                     help="Specify the name of the similarity to use.")
