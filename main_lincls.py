@@ -115,7 +115,8 @@ def main(kwargs=None):
 
     if kwargs:
         for k, v in vars(kwargs).items():
-            setattr(args, k, v)
+            if k in vars(args):
+                setattr(args, k, v)
 
     # Saving checkpoint and config pased on experiment mode
     expt_dir = "experiments"
