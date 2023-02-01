@@ -192,11 +192,13 @@ parser.add_argument('--fix-pred-lr', action='store_true',
 
 def main(kwargs=None):
     args = parser.parse_args()
-
     # overload args with kwargs
-    if kwargs:
+    if kwargs is not None:
         for k, v in vars(kwargs).items():
-            setattr(args, k, v)
+            if k in vars(args):
+                setattr(args, k, v)
+            else:
+                print(f"{k} not in args. Not setting it.")
 
     # Saving checkpoint and config pased on experiment mode
     expt_dir = "experiments"

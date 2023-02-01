@@ -54,13 +54,13 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
-                    help='number of data loading workers (default: 32)')
+parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+                    help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=4096, type=int,
+parser.add_argument('-b', '--batch-size', default=2048, type=int,
                     metavar='N',
                     help='mini-batch size (default: 4096), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -111,12 +111,13 @@ best_acc1 = 0
 
 
 def main(kwargs=None):
-    args = parser.parse_args()
-
-    if kwargs:
+    args, unknown = parser.parse_known_args()
+    if kwargs is not None:
         for k, v in vars(kwargs).items():
             if k in vars(args):
                 setattr(args, k, v)
+            else:
+                print(f"{k} not in args")
 
     # Saving checkpoint and config pased on experiment mode
     expt_dir = "experiments"
@@ -126,14 +127,6 @@ def main(kwargs=None):
 
     if not os.path.exists(expt_sub_dir):
         os.makedirs(expt_sub_dir)
-
-    if args.dataset == 'CIFAR10':
-        args.epochs = 90
-        args.lr = 0.1
-        args.batch_size = 2048
-        args.workers = 4
-        args.weight_decay = 0.0
-        print(f"Changed hyperparameters for CIFAR10")
 
     args_dict = vars(args)
     print(args_dict)
