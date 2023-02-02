@@ -139,6 +139,8 @@ parser.add_argument('--resume', default='', type=str, metavar='PATH',
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH',
                     help='')
 
+parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
+
 
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
