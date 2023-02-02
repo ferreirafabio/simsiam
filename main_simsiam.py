@@ -178,12 +178,7 @@ parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the
 
 parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
 
-parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH',
-                    help='')
-parser.add_argument('--pretrained', default='', type=str,
-                    help='path to simsiam pretrained checkpoint')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
+parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH', help='')
 
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
