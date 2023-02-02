@@ -377,17 +377,25 @@ def main_worker(gpu, ngpus_per_node, args):
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                and args.rank % ngpus_per_node == 0) and epoch % args.save_freq==0:
-            save_checkpoint({
+        save_dict = {
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer' : optimizer.state_dict(),
-            }, is_best, filename=os.path.join(args.expt_dir,'checkpoint_lincls_{:04d}.pth.tar'.format(epoch)), expt_dir=args.expt_dir)
-            if epoch == args.start_epoch:
-                sanity_check(model.state_dict(), args.pretrained)
+                }
+        
+        if epoch == args.start_epoch:   
+            sanity_check(model.state_dict(), args.pretrained)
+
+        if args.rank == 0:
+            save_checkpoint(save_dict, is_best=False, filename=os.path.join(args.expt_dir, "checkpoint_linear_eval.pth.tar"))
+
+        #if not args.multiprocessing_distributed or (args.multiprocessing_distributed
+        #        and args.rank % ngpus_per_node == 0) and epoch % args.save_freq==0:
+        #    save_checkpoint(save_dict, is_best, filename=os.path.join(args.expt_dir,'checkpoint_lincls_{:04d}.pth.tar'.format(epoch)), expt_dir=args.expt_dir)
+
+
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -499,7 +507,7 @@ def sanity_check(state_dict, pretrained_weights):
     print("=> loading '{}' for sanity check".format(pretrained_weights))
     checkpoint = torch.load(pretrained_weights, map_location="cpu")
     state_dict_pre = checkpoint['state_dict']
-
+    
     for k in list(state_dict.keys()):
         # only ignore fc layer
         if 'fc.weight' in k or 'fc.bias' in k:
@@ -508,7 +516,6 @@ def sanity_check(state_dict, pretrained_weights):
         # name in pretrained model
         k_pre = 'module.encoder.' + k[len('module.'):] \
             if k.startswith('module.') else 'module.encoder.' + k
-
         assert ((state_dict[k].cpu() == state_dict_pre[k_pre]).all()), \
             '{} is changed in linear classifier training.'.format(k)
 

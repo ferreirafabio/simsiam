@@ -178,6 +178,10 @@ parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the
 
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH',
                     help='')
+parser.add_argument('--pretrained', default='', type=str,
+                    help='path to simsiam pretrained checkpoint')
+parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                    help='path to latest checkpoint (default: none)')
 
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
@@ -191,7 +195,7 @@ parser.add_argument('--fix-pred-lr', action='store_true',
 
 
 def main(kwargs=None):
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
     # overload args with kwargs
     if kwargs is not None:
         for k, v in vars(kwargs).items():
@@ -560,7 +564,7 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.rank == 0:
             save_checkpoint(save_dict, is_best=False, filename=os.path.join(args.expt_dir, base_checkpoint_name + ".pth.tar"))
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank == 0):
             if epoch % args.save_freq == 0 or is_last_epoch:
                 save_checkpoint(save_dict, is_best=False, filename=checkpoint_filename_epoch_wise)
 
