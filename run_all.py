@@ -65,7 +65,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 parser.add_argument('--dataset', default='CIFAR10', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
 parser.add_argument('--expt-name', default='default_experiment', type=str, help='Name of the experiment')
-parser.add_argument('--save-freq', default=10, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
+parser.add_argument('--save-freq', default=50, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
 
 # STN
 parser.add_argument("--invert_stn_gradients", default=True, type=utils.bool_flag,
@@ -81,7 +81,7 @@ parser.add_argument("--stn_lr", default=5e-5, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=50, type=int, 
+parser.add_argument("--summary_writer_freq", default=25, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
 parser.add_argument("--grad_check_freq", default=50, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
