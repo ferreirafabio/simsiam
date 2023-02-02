@@ -76,12 +76,12 @@ parser.add_argument("--use_stn_optimizer", default=False, type=utils.bool_flag,
 parser.add_argument('--stn_mode', default='affine', type=str,
                     help='Determines the STN mode (choose from: affine, translation, scale, rotation, '
                             'rotation_scale, translation_scale, rotation_translation, rotation_translation_scale')
-parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate at the end of
+parser.add_argument("--stn_lr", default=5e-5, type=float, help="""Learning rate at the end of
                     linear warmup (highest LR used during training) of the STN optimizer. The learning rate is linearly scaled
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=10, type=int, 
+parser.add_argument("--summary_writer_freq", default=50, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
 parser.add_argument("--grad_check_freq", default=50, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
@@ -130,12 +130,15 @@ parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05,
                     Used for small local view cropping of multi-crop.""")
 parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag, help="used to load an already trained backbone and set start_epoch to 0.")
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
+parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
+
 parser.add_argument('--pretrained', default='', type=str,
                     help='path to simsiam pretrained checkpoint')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH',
                     help='')
+
 
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,

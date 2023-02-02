@@ -126,7 +126,7 @@ parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=10, type=int, 
+parser.add_argument("--summary_writer_freq", default=50, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
 parser.add_argument("--grad_check_freq", default=50, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
@@ -175,6 +175,8 @@ parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05,
                     Used for small local view cropping of multi-crop.""")
 parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag, help="used to load an already trained backbone and set start_epoch to 0.")
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
+
+parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
 
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH',
                     help='')
@@ -291,6 +293,10 @@ def main_worker(gpu, ngpus_per_node, args):
             args.dim, 
             args.pred_dim)
 
+    stn_ema_updater = None
+    if args.stn_ema_update:
+        stn_ema_updater = utils.EMA(0.99)
+
     transform_net = STN(
        mode=args.stn_mode,
        invert_gradients=args.invert_stn_gradients,
@@ -345,7 +351,7 @@ def main_worker(gpu, ngpus_per_node, args):
             args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         
-            stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu])
+            stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu], find_unused_parameters=True)
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
@@ -365,6 +371,16 @@ def main_worker(gpu, ngpus_per_node, args):
         # AllGather implementation (batch shuffle, queue update, etc.) in
         # this code only supports DistributedDataParallel.
         raise NotImplementedError("Only DistributedDataParallel is supported.")
+    
+    target_stn = None
+    if args.stn_ema_update:
+        target_stn = copy.deepcopy(stn)
+        # there is no backpropagation through the stn target, so no need for gradients
+        for p in target_stn.parameters():
+            p.requires_grad = False
+        
+        print(target_stn)
+    
     print(model) # print model after SyncBatchNorm
     print(stn)
 
@@ -390,7 +406,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if args.use_stn_optimizer and not args.use_pretrained_stn:
         stn_optimizer = torch.optim.SGD(params=list(stn.parameters()), 
-                                        lr=args.init_stn_lr,
+                                        lr=init_stn_lr,
                                         momentum=args.momentum,
                                         weight_decay=args.weight_decay
                                         )
@@ -402,7 +418,6 @@ def main_worker(gpu, ngpus_per_node, args):
     # if we want to train with frozen STN weights but no checkpoint of this run exists yet -> load stn training checkpoint
     if not os.path.isfile(checkpoint_to_resume):
         checkpoint_to_resume = os.path.join(args.expt_dir, "checkpoint_training_stn.pth.tar")
-        print("no frozen STN weights-training checkpoint found, loading STN training checkpoint instead.")
         first_time_frozen_stn = True
     
     # optionally resume from a checkpoint
@@ -428,7 +443,6 @@ def main_worker(gpu, ngpus_per_node, args):
             optimizer.load_state_dict(checkpoint['optimizer'])
             print(f"=> loaded optimizer.")
 
-        
         if stn_optimizer:
             stn_optimizer.load_state_dict(checkpoint['stn_optimizer'])
             print(f"=> loaded stn optimizer.")
@@ -466,19 +480,6 @@ def main_worker(gpu, ngpus_per_node, args):
         # Data loading code
         traindir = os.path.join(args.dataset_path, 'train')
 
-        # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-        # transform = [
-        #     transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-        #     transforms.RandomApply([
-        #         transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-        #     ], p=0.8),
-        #     transforms.RandomGrayscale(p=0.2),
-        #     transforms.RandomApply([simsiam.loader.GaussianBlur([.1, 2.])], p=0.5),
-        #     transforms.RandomHorizontalFlip(),
-        #     transforms.ToTensor(),
-        #     normalize_imagenet,
-        # ]
-
         transform = transforms.Compose([
                 transforms.Resize(256),
                 transforms.CenterCrop(224),
@@ -493,17 +494,6 @@ def main_worker(gpu, ngpus_per_node, args):
         collate_fn = None
     
     elif args.dataset == 'CIFAR10':
-        # transform = simsiam.loader.TwoCropsTransform(transforms.Compose(
-        #         [
-        #             transforms.RandomResizedCrop(size=32, scale=(0.2, 1.)),
-        #             transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-        #             transforms.RandomGrayscale(p=0.2),
-        #             transforms.RandomHorizontalFlip(),
-        #             transforms.ToTensor(),
-        #             normalize_cifar10,
-        #         ]
-        #     )
-        # )
 
         transform = transforms.Compose([
                 transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
@@ -546,7 +536,7 @@ def main_worker(gpu, ngpus_per_node, args):
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
         # train for one epoch
-        global_step = train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, args, global_step, summary_writer, sim_loss)
+        global_step = train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, global_step, summary_writer, sim_loss)
 
         is_last_epoch = epoch + 1 >= args.epochs
 
@@ -574,7 +564,7 @@ def main_worker(gpu, ngpus_per_node, args):
         summary_writer.close()
 
 
-def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, args, global_step, summary_writer=None, sim_loss=None):
+def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, global_step, summary_writer=None, sim_loss=None):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     simsiam_loss = AverageMeter('SimSiam Loss', ':.4f')
@@ -601,11 +591,17 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
         data_time.update(time.time() - end)
 
         if args.gpu is not None:
-            iamges = images.cuda(args.gpu, non_blocking=True)
+            images = images.cuda(args.gpu, non_blocking=True)
 
         # print(images[0].shape)
 
         stn_images, thetas = stn(images)
+
+        if args.stn_ema_update:
+            with torch.no_grad():
+                stn_images_target, thetas_target = target_stn(images)
+                thetas[1] = thetas_target[1]
+                stn_images[1] = stn_images_target[1]
 
         # print("len(stn_images) (should be 2): ", len(stn_images))
         # print("stn_images: ", stn_images)
@@ -641,14 +637,17 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
             ])        
             
             stn_images[0] = transform_view1(stn_images[0])
-            stn_images[1] = transform_view2(stn_images[1])          
+            stn_images[1] = transform_view2(stn_images[1])   
+            # TODO: do this for stn_images_target       
         
         # print("stn_images[0].shape (should be [batch_size, 3, 32, 32]: ", stn_images[0].shape)
         # print("images.shape (should be [batch_size, 3, 32, 32])", images.shape)
         # print("images[0].shape (should be [3, 32, 32]): ", images[0].shape) 
 
         # compute output and loss
+  
         p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
+        
         simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
         penalty_l = penalty * args.penalty_weight
         total_l = simsiam_l + penalty_l
@@ -670,6 +669,9 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, epoch, 
 
         if args.use_stn_optimizer and not args.use_pretrained_stn:
             stn_optimizer.step()
+
+        if args.stn_ema_update:
+            utils.update_moving_average(stn_ema_updater, ma_model=target_stn, current_model=stn)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
