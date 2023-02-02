@@ -180,6 +180,8 @@ parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, hel
 
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH', help='')
 
+parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
+
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
                     help='feature dimension (default: 2048)')
@@ -640,14 +642,25 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         # print("stn_images[0].shape (should be [batch_size, 3, 32, 32]: ", stn_images[0].shape)
         # print("images.shape (should be [batch_size, 3, 32, 32])", images.shape)
         # print("images[0].shape (should be [3, 32, 32]): ", images[0].shape) 
-
-        # compute output and loss
-  
-        p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
         
-        simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
+        # compute output and loss
         penalty_l = penalty * args.penalty_weight
-        total_l = simsiam_l + penalty_l
+
+        if not args.four_way_loss:
+            # compute output and loss
+            p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
+            
+            simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
+            total_l = simsiam_l + penalty_l
+
+        else:
+            p1, p2, z1, z2 = model(x1=images, x2=stn_images[0])
+            p3, p4, z3, z4 = model(x1=images, x2=stn_images[1])
+            simsiam_l1 = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.25
+            simsiam_l2 = -(criterion(p3, z3).mean() + criterion(p4, z4).mean()) * 0.25
+
+            simsiam_l = simsiam_l1 + simsiam_l2
+            total_l = simsiam_l + penalty_l
 
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))
