@@ -289,8 +289,10 @@ def main_worker(gpu, ngpus_per_node, args):
             args.pred_dim)
 
     stn_ema_updater = None
+    find_unused_parameters = False
     if args.stn_ema_update:
         stn_ema_updater = utils.EMA(0.99)
+        find_unused_parameters=True
 
     transform_net = STN(
        mode=args.stn_mode,
@@ -346,7 +348,7 @@ def main_worker(gpu, ngpus_per_node, args):
             args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         
-            stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu], find_unused_parameters=True)
+            stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu], find_unused_parameters=find_unused_parameters)
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
