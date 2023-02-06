@@ -57,6 +57,24 @@ def grad_reverse(x, scale=1.0):
     return GradientReverse.apply(x)
 
 
+class GradientRescale(torch.autograd.Function):
+    scale = 1.0
+
+    @staticmethod
+    def forward(ctx, x):
+        #  autograd checks for changes in tensor to determine if backward should be called
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return GradientRescale.scale * grad_output
+
+
+def grad_rescale(x, scale=1.0):
+    GradientRescale.scale = scale
+    return GradientRescale.apply(x)
+
+
 def image_grid(stn_images, original_images, epoch, plot_size=16):
     """Return a 5x5 grid of the MNIST images as a matplotlib figure."""
     # Create a figure to contain the plot.
@@ -122,6 +140,15 @@ def theta_heatmap(theta, epoch):
     ax.set_title(f'Theta @ {epoch} epoch')
     return figure
 
+
+class NoneTransform(object):
+    """ Does nothing to the image, to be used instead of None
+    
+    Args:
+        image in, image out, nothing is done
+    """
+    def __call__(self, image):       
+        return image
 
 def bool_flag(s):
     """

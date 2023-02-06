@@ -196,7 +196,7 @@ def main_worker(gpu, ngpus_per_node, args):
         model = resnet_cifar.resnet18(num_classes=10, zero_init_residual=True)
     elif args.dataset == 'ImageNet':
         print(f"=> creating model {args.arch}")
-        model = model = models.__dict__[args.arch]()
+        model = models.__dict__[args.arch]()
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():

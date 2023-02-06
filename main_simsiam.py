@@ -38,8 +38,8 @@ import simsiam.loader
 import simsiam.builder
 
 import utils
+import penalties
 from utils import SummaryWriterCustom, custom_collate
-from penalty_losses import HISTLoss, SIMLoss, ThetaLoss, ThetaCropsPenalty
 from stn import AugmentationNetwork, STN
 
 normalize_imagenet = transforms.Normalize(
@@ -56,11 +56,11 @@ model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
+
+penalty_list = sorted(name for name in penalties.__dict__
+                      if name[0].isupper() and not name.startswith("__") and callable(penalties.__dict__[name]))
 penalty_dict = {
-    "simloss": SIMLoss,
-    "histloss": HISTLoss,
-    "thetaloss": ThetaLoss,
-    "thetacropspenalty": ThetaCropsPenalty,
+    penalty: penalties.__dict__[penalty] for penalty in penalty_list
 }
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
@@ -148,7 +148,7 @@ parser.add_argument("--stn_conv2_depth", default=32, type=int,
                     help="Specifies the number of feature maps of conv2 for the STN localization network (default: 32).")
 parser.add_argument("--stn_theta_norm", default=True, type=utils.bool_flag,
                     help="Set this flag to normalize 'theta' in the STN before passing to affine_grid(theta, ...). Fixes the problem with cropping of the images (black regions)")
-parser.add_argument("--penalty_loss", default="", type=str, choices=list(penalty_dict.keys()),
+parser.add_argument("--penalty_loss", default="", type=str, choices=penalty_list,
                     help="Specify the name of the similarity to use.")
 parser.add_argument("--epsilon", default=1., type=float,
                     help="Scalar for the penalty loss")
@@ -177,10 +177,12 @@ parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag,
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
 
 parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
+parser.add_argument("--stn_ema_momentum", default=0.99, type=int, help="")
 
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH', help='')
 
 parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
+parser.add_argument('--use_stn', default=True, type=utils.bool_flag, help='for testing reasons')
 
 # simsiam specific configs:
 parser.add_argument('--dim', default=2048, type=int,
@@ -244,6 +246,7 @@ def main(kwargs=None):
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
     ngpus_per_node = torch.cuda.device_count()
+    print("ngpus per node", ngpus_per_node)
     if args.multiprocessing_distributed:
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
@@ -293,47 +296,53 @@ def main_worker(gpu, ngpus_per_node, args):
     stn_ema_updater = None
     find_unused_parameters = False
     if args.stn_ema_update:
-        stn_ema_updater = utils.EMA(0.99)
+        stn_ema_updater = utils.EMA(beta=args.stn_ema_momentum)
         find_unused_parameters=True
 
-    transform_net = STN(
-       mode=args.stn_mode,
-       invert_gradients=args.invert_stn_gradients,
-       separate_localization_net=args.separate_localization_net,
-       conv1_depth=args.stn_conv1_depth,
-       conv2_depth=args.stn_conv2_depth,
-       theta_norm=args.stn_theta_norm,
-       local_crops_number=args.local_crops_number,
-       global_crops_scale=args.global_crops_scale,
-       local_crops_scale=args.local_crops_scale,
-       resolution=args.stn_res,
-       unbounded_stn=args.use_unbounded_stn,
-    )
-    stn = AugmentationNetwork(
-       transform_net=transform_net,
-       resize_input=args.resize_input,
-       resize_size=args.resize_size,
-    )
-
     sim_loss = None
-    if args.penalty_loss:
-        Loss = penalty_dict[args.penalty_loss]
-        sim_loss = Loss(
-            invert=args.invert_penalty,
-            resolution=32,
-            exponent=2,
-            bins=100,
-            eps=args.epsilon,
-        ).cuda()
+    stn = None
+    if args.use_stn:
+        transform_net = STN(
+        mode=args.stn_mode,
+        invert_gradients=args.invert_stn_gradients,
+        separate_localization_net=args.separate_localization_net,
+        conv1_depth=args.stn_conv1_depth,
+        conv2_depth=args.stn_conv2_depth,
+        theta_norm=args.stn_theta_norm,
+        local_crops_number=args.local_crops_number,
+        global_crops_scale=args.global_crops_scale,
+        local_crops_scale=args.local_crops_scale,
+        resolution=args.stn_res,
+        unbounded_stn=args.use_unbounded_stn,
+        )
+        stn = AugmentationNetwork(
+        transform_net=transform_net,
+        resize_input=args.resize_input,
+        resize_size=args.resize_size,
+        )
+
+        
+        if args.penalty_loss:
+            sim_loss = penalty_dict[args.penalty_loss](
+                invert=args.invert_penalty,
+                local_crops_scale=args.local_crops_scale,
+                global_crops_scale=args.global_crops_scale,
+                resolution=32,
+                exponent=2,
+                bins=100,
+                eps=args.epsilon,
+            ).cuda()
 
     # infer learning rate before changing batch size
     init_lr = args.lr * args.batch_size / 256
-    init_stn_lr = args.stn_lr * args.batch_size / 256
+    if args.use_stn:
+        init_stn_lr = args.stn_lr * args.batch_size / 256
 
     if args.distributed:
         # Apply SyncBN
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        stn = torch.nn.SyncBatchNorm.convert_sync_batchnorm(stn)
+        if args.use_stn:
+            stn = torch.nn.SyncBatchNorm.convert_sync_batchnorm(stn)
 
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
@@ -341,7 +350,8 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.gpu is not None:
             torch.cuda.set_device(args.gpu)
             model.cuda(args.gpu)
-            stn.cuda(args.gpu)
+            if args.use_stn:
+                stn.cuda(args.gpu)
 
             # When using a single GPU per process and per
             # DistributedDataParallel, we need to divide the batch size
@@ -349,20 +359,21 @@ def main_worker(gpu, ngpus_per_node, args):
             args.batch_size = int(args.batch_size / ngpus_per_node)
             args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-        
-            stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu], find_unused_parameters=find_unused_parameters)
+            if args.use_stn:
+                stn = torch.nn.parallel.DistributedDataParallel(stn, device_ids=[args.gpu], find_unused_parameters=find_unused_parameters)
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
             # available GPUs if device_ids are not set
             model = torch.nn.parallel.DistributedDataParallel(model)
-            
-            stn = torch.nn.parallel.DistributedDataParallel(stn)
+            if args.use_stn:
+                stn = torch.nn.parallel.DistributedDataParallel(stn)
 
     elif args.gpu is not None:
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
-        stn = stn.cuda(args.gpu)
+        if args.use_stn:
+            stn = stn.cuda(args.gpu)
 
         # comment out the following line for debugging
         raise NotImplementedError("Only DistributedDataParallel is supported.")
@@ -372,7 +383,7 @@ def main_worker(gpu, ngpus_per_node, args):
         raise NotImplementedError("Only DistributedDataParallel is supported.")
     
     target_stn = None
-    if args.stn_ema_update:
+    if args.stn_ema_update and args.use_stn:
         target_stn = copy.deepcopy(stn)
         # there is no backpropagation through the stn target, so no need for gradients
         for p in target_stn.parameters():
@@ -391,11 +402,12 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.fix_pred_lr:
         optim_params = [{'params': model.module.encoder.parameters(), 'fix_lr': False},
                         {'params': model.module.predictor.parameters(), 'fix_lr': True}]
-        if not args.use_stn_optimizer and not args.use_pretrained_stn:
+        
+        if not args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             optim_params += [{'params': stn.parameters(), 'fix_lr': False}]
     else:
         optim_params = list(model.parameters())
-        if not args.use_stn_optimizer and not args.use_pretrained_stn:
+        if not args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             optim_params += list(stn.parameters())
 
 
@@ -403,7 +415,7 @@ def main_worker(gpu, ngpus_per_node, args):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-    if args.use_stn_optimizer and not args.use_pretrained_stn:
+    if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
         stn_optimizer = torch.optim.SGD(params=list(stn.parameters()), 
                                         lr=init_stn_lr,
                                         momentum=args.momentum,
@@ -432,8 +444,9 @@ def main_worker(gpu, ngpus_per_node, args):
         model.load_state_dict(checkpoint['state_dict'])
         print(f"=> loaded backbone weights.")
 
-        stn.load_state_dict(checkpoint['stn'])
-        print(f"=> loaded stn weights.")
+        if args.use_stn:
+            stn.load_state_dict(checkpoint['stn'])
+            print(f"=> loaded stn weights.")
 
         # loading the old optimizer isn't possible since we optimize fewer parameters when running
         # frozen stn mode
@@ -449,7 +462,7 @@ def main_worker(gpu, ngpus_per_node, args):
         if not args.use_pretrained_stn:
             print(f"=> loaded checkpoint (epoch {checkpoint['epoch']}).")
 
-        if args.use_pretrained_stn:
+        if args.use_pretrained_stn and args.use_stn:
             for p in stn.parameters():
                 p.requires_grad = False
             print(f"=> stn weights frozen.")
@@ -462,11 +475,9 @@ def main_worker(gpu, ngpus_per_node, args):
             print("=> no checkpoint found to resume from. Starting fresh STN training.")
         
     cudnn.benchmark = True
-    # writer = None
     summary_writer = None
     if args.rank == 0:
         summary_writer = SummaryWriterCustom(args.expt_dir / "summary", plot_size=args.summary_plot_size)
-
 
     if not args.resize_all_inputs and args.dataset == 'ImageNet':
         transform = transforms.Compose([
@@ -485,25 +496,32 @@ def main_worker(gpu, ngpus_per_node, args):
                 transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
                 transforms.RandomGrayscale(p=0.2),
                 transforms.RandomApply([simsiam.loader.GaussianBlur([.1, 2.])], p=0.5),
-                #removed RandomHorizontalFlip as it is learned by the STN
+                utils.NoneTransform() if args.use_stn else transforms.RandomHorizontalFlip(), #removed RandomHorizontalFlip as it is learned by the STN
                 transforms.ToTensor(),
                 normalize_imagenet,
             ])
 
         collate_fn = None
+        if args.use_stn:
+            train_dataset = datasets.ImageFolder(traindir, transform=transform)
+        else:
+            train_dataset = datasets.ImageFolder(traindir, simsiam.loader.TwoCropsTransform(transform))
     
     elif args.dataset == 'CIFAR10':
-
         transform = transforms.Compose([
+                transforms.RandomResizedCrop(32, scale=(0.2, 1.)), # utils.NoneTransform() if args.use_stn else transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
                 transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
                 transforms.RandomGrayscale(p=0.2),  
-                #removed RandomHorizontalFlip as it is learned by the STN
+                utils.NoneTransform() if args.use_stn else transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+                normalize_cifar10,
             ])
-
+            
         collate_fn = None
-        train_dataset = datasets.CIFAR10(root='datasets/CIFAR10', train=True, download=True, transform=transform)
+        if args.use_stn:
+            train_dataset = datasets.CIFAR10(root='datasets/CIFAR10', train=True, download=True, transform=transform)
+        else:
+            train_dataset = datasets.CIFAR10(root='datasets/CIFAR10', train=True, download=True, transform=simsiam.loader.TwoCropsTransform(transform))
     else:
         raise ValueError("Dataset not supported.")
 
@@ -525,17 +543,16 @@ def main_worker(gpu, ngpus_per_node, args):
         collate_fn=collate_fn
         )
 
-    global_step = 0
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, init_lr, epoch, args)
 
-        if args.use_stn_optimizer and not args.use_pretrained_stn:
+        if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
         # train for one epoch
-        global_step = train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, global_step, summary_writer, sim_loss)
+        train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, sim_loss)
 
         is_last_epoch = epoch + 1 >= args.epochs
 
@@ -544,14 +561,15 @@ def main_worker(gpu, ngpus_per_node, args):
                     'arch': args.arch,
                     'state_dict': model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
-                    'stn': stn.state_dict(),
-                    'stn_optimizer': stn_optimizer.state_dict() if stn_optimizer else None,
+                    'stn': stn.state_dict() if args.use_stn else None,
+                    'stn_optimizer': stn_optimizer.state_dict() if args.use_stn and stn_optimizer else None,
                 }
 
         checkpoint_filename_epoch_wise = os.path.join(args.expt_dir, base_checkpoint_name + f'_{epoch:04d}.pth.tar')
 
         if args.rank == 0:
             save_checkpoint(save_dict, is_best=False, filename=os.path.join(args.expt_dir, base_checkpoint_name + ".pth.tar"))
+            #save_checkpoint(save_dict, is_best=False, filename=os.path.join(args.expt_dir, "model.pth.tar"))
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank == 0):
             if epoch % args.save_freq == 0 or is_last_epoch:
@@ -563,7 +581,7 @@ def main_worker(gpu, ngpus_per_node, args):
         summary_writer.close()
 
 
-def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, global_step, summary_writer=None, sim_loss=None):
+def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer=None, sim_loss=None):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     simsiam_loss = AverageMeter('SimSiam Loss', ':.4f')
@@ -590,13 +608,18 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         data_time.update(time.time() - end)
 
         if args.gpu is not None:
-            images = images.cuda(args.gpu, non_blocking=True)
+            if args.use_stn:
+                images = images.cuda(args.gpu, non_blocking=True)
+            else:
+                images[0] = images[0].cuda(args.gpu, non_blocking=True)
+                images[1] = images[1].cuda(args.gpu, non_blocking=True)
 
-        # print(images[0].shape)
+        if args.use_stn:
+            stn_images, thetas = stn(images)
+        else:
+            stn_images = images
 
-        stn_images, thetas = stn(images)
-
-        if args.stn_ema_update:
+        if args.stn_ema_update and args.use_stn:
             with torch.no_grad():
                 stn_images_target, thetas_target = target_stn(images)
                 thetas[1] = thetas_target[1]
@@ -606,16 +629,16 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         # print("stn_images: ", stn_images)
         # print("stn_images[0].shape: ", stn_images[0].shape) # should be [batch_size/n_gpus, 3, 32, 32]
         # print("stn_images[1].shape: ", stn_images[1].shape) # should be [batch_size/n_gpus, 3, 32, 32]
+        penalty = 0
+        if args.use_stn:
+            if sim_loss:
+                if args.penalty_loss == 'thetacropspenalty':
+                    for t in thetas:
+                        penalty += sim_loss(theta=t, crops_scale=args.global_crops_scale)
+                else:
+                    penalty = sim_loss(images=stn_images, target=images, thetas=thetas)
 
-        penalty = torch.tensor(0.).cuda()
-        if sim_loss:
-            if args.penalty_loss == 'thetacropspenalty':
-                for t in thetas:
-                    penalty += sim_loss(theta=t, crops_scale=args.global_crops_scale)
-            else:
-                penalty = sim_loss(images=stn_images, target=images, theta=thetas,)
-
-        if not args.resize_all_inputs and args.dataset == 'ImageNet':
+        if not args.resize_all_inputs and args.dataset == 'ImageNet' and args.use_stn:
             # in the case of varying image resolutions, we could not color-augment images in DataLoader -> do it here:
             color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)
             gaussian_blur = simsiam.loader.GaussianBlur([.1, 2.])
@@ -623,7 +646,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
               transforms.RandomApply([color_jitter], p=0.8),
               transforms.RandomGrayscale(p=0.2),
               transforms.RandomApply([gaussian_blur], p=0.5),
-              transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+              normalize_imagenet,
               transforms.ConvertImageDtype(torch.float32),
             ])
 
@@ -631,7 +654,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
               transforms.RandomApply([color_jitter], p=0.8),
               transforms.RandomGrayscale(p=0.2),
               transforms.RandomApply([gaussian_blur], p=0.5),
-              transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+              normalize_imagenet,
               transforms.ConvertImageDtype(torch.float32),
             ])        
             
@@ -639,9 +662,6 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             stn_images[1] = transform_view2(stn_images[1])   
             # TODO: do this for stn_images_target       
         
-        # print("stn_images[0].shape (should be [batch_size, 3, 32, 32]: ", stn_images[0].shape)
-        # print("images.shape (should be [batch_size, 3, 32, 32])", images.shape)
-        # print("images[0].shape (should be [3, 32, 32]): ", images[0].shape) 
         
         # compute output and loss
         penalty_l = penalty * args.penalty_weight
@@ -665,22 +685,24 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))
         
-        if sim_loss:
+        if sim_loss and args.use_stn:
             penalty_loss_meter.update(penalty_l.item(), images[0].size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
 
-        if args.use_stn_optimizer and not args.use_pretrained_stn:
+        if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             stn_optimizer.zero_grad()
 
         total_l.backward()
         optimizer.step()
 
-        if args.use_stn_optimizer and not args.use_pretrained_stn:
+        # print(model.module.encoder.conv3_x[0].residual_function[0].weight.grad)
+
+        if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             stn_optimizer.step()
 
-        if args.stn_ema_update:
+        if args.stn_ema_update and args.use_stn:
             utils.update_moving_average(stn_ema_updater, ma_model=target_stn, current_model=stn)
 
         # measure elapsed time
@@ -696,25 +718,24 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             summary_writer.write_scalar(tag=tag_loss_simsiam, scalar_value=simsiam_l.item(), epoch=epoch+1)
             summary_writer.write_scalar(tag=tag_lr, scalar_value=optimizer.param_groups[0]["lr"], epoch=epoch+1)
             
-            if sim_loss and not args.use_pretrained_stn:
+            if sim_loss and not args.use_pretrained_stn and args.use_stn:
                 summary_writer.write_scalar(tag="Penalty Loss", scalar_value=penalty.item(), epoch=epoch+1)
 
-            if args.use_stn_optimizer and not args.use_pretrained_stn:
+            if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
                 summary_writer.write_scalar(tag="lr stn", scalar_value=stn_optimizer.param_groups[0]["lr"], epoch=epoch+1)
 
-            if epoch % args.grad_check_freq == 0 and i == 0:
+            if epoch % args.grad_check_freq == 0 and i == 0 and args.use_stn:
                 utils.print_gradients(stn, args)
             
             if i % args.print_freq == 0:
                 progress.display(i)
 
             # Log stuff to tensorboard
-            if epoch % args.summary_writer_freq == 0 and i == 0:
+            if epoch % args.summary_writer_freq == 0 and i == 0 and args.use_stn:
                 tag_images = "images (frozen STN)" if args.use_pretrained_stn else "images (training STN)"
                 tag_thetas = "theta (frozen STN)" if args.use_pretrained_stn else "theta (training STN)"
                 summary_writer.write_stn_info(stn_images, images, thetas, epoch+1, tag_images=tag_images, tag_thetas=tag_thetas)
 
-    return global_step
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)

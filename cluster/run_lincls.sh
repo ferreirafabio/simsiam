@@ -3,9 +3,11 @@
 #SBATCH --gres=gpu:4
 #SBATCH -J simsiam_lincls
 #SBATCH -t 23:59:59 #4-23:59:59 #23:59:59
+#SBATCH --array 0-5%1
 
 source /home/ferreira/.profile
-source activate metassl
+source activate metassl2
 
-python main_lincls.py --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 --pretrained "experiments/cifar10/checkpoint_0799.pth.tar" --dataset "CIFAR10" --expt-name "cifar10"
+random_port=$(shuf -i 10003-15000 -n 1)
 
+python run_all.py --dist-url "tcp://localhost:$random_port" --multiprocessing-distributed --world-size 1 --rank 0 --expt-name $EXP_NAME --invert_stn_gradients True --use_stn_optimizer False --pipeline_mode "eval"

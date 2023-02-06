@@ -1,21 +1,20 @@
 from main_simsiam import main as run_simiam
 from main_lincls import main as run_linear
-from penalty_losses import HISTLoss, SIMLoss, ThetaLoss, ThetaCropsPenalty
 import torchvision.models as models
 import argparse
 import utils
 import time
 import os
+import penalties
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
+penalty_list = sorted(name for name in penalties.__dict__
+                      if name[0].isupper() and not name.startswith("__") and callable(penalties.__dict__[name]))
 penalty_dict = {
-    "simloss": SIMLoss,
-    "histloss": HISTLoss,
-    "thetaloss": ThetaLoss,
-    "thetacropspenalty": ThetaCropsPenalty,
+    penalty: penalties.__dict__[penalty] for penalty in penalty_list
 }
 
 parser = argparse.ArgumentParser(description='SimSiam Full Pipeline')
@@ -103,7 +102,7 @@ parser.add_argument("--stn_conv2_depth", default=32, type=int,
                     help="Specifies the number of feature maps of conv2 for the STN localization network (default: 32).")
 parser.add_argument("--stn_theta_norm", default=True, type=utils.bool_flag,
                     help="Set this flag to normalize 'theta' in the STN before passing to affine_grid(theta, ...). Fixes the problem with cropping of the images (black regions)")
-parser.add_argument("--penalty_loss", default="", type=str, choices=list(penalty_dict.keys()),
+parser.add_argument("--penalty_loss", default="", type=str, choices=penalty_list,
                     help="Specify the name of the similarity to use.")
 parser.add_argument("--epsilon", default=1., type=float,
                     help="Scalar for the penalty loss")
@@ -131,6 +130,7 @@ parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05,
 parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag, help="used to load an already trained backbone and set start_epoch to 0.")
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
 parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
+parser.add_argument("--stn_ema_momentum", default=0.99, type=int, help="")
 
 parser.add_argument('--pretrained', default='', type=str,
                     help='path to simsiam pretrained checkpoint')
@@ -140,6 +140,7 @@ parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag,
                     help='')
 
 parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
+parser.add_argument('--use_stn', default=True, type=utils.bool_flag, help='for testing reasons')
 
 
 # simsiam specific configs:
@@ -171,8 +172,15 @@ if __name__ == '__main__':
 
         print(f"running pipeline mode: {outer_args.pipeline_mode}")
 
+        if outer_args.epochs is not None:
+            epochs = outer_args.epochs
+        elif "frozen" in outer_args.pipeline_mode:
+            epochs = 100
+        else:   
+            epochs = 800
+
         stn_train_dct = {
-            "epochs": 100 if "frozen" in outer_args.pipeline_mode else 800,
+            "epochs": epochs,
             "use_pretrained_stn": False,
         }
 
