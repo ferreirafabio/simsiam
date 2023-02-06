@@ -634,7 +634,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             if sim_loss:
                 if args.penalty_loss == 'thetacropspenalty':
                     for t in thetas:
-                        penalty += sim_loss(theta=t, crops_scale=args.global_crops_scale)
+                        penalty += sim_loss(thetas=t, crops_scale=args.global_crops_scale)
                 else:
                     penalty = sim_loss(images=stn_images, target=images, thetas=thetas)
 
