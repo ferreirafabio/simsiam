@@ -275,17 +275,24 @@ class SIMLoss(nn.Module):
 class ThetaLoss(nn.Module):
     def __init__(self, eps=1, invert=False, **kwargs):
         super().__init__()
-        self.invert = -1 if invert else 1
-        self.eps = eps * self.invert
+        self.invert = invert
+        self.eps = eps
         self.loss_fn = nn.MSELoss()
 
     def forward(self, thetas, **args):
-        # create identity tensor of shape [batch_size,2,3]
-        identity = torch.tensor([[[1, 0, 0], [0, 1, 0]]], dtype=torch.float, device=thetas[0].get_device()).repeat(thetas[0].shape[0], 1, 1)
+        identity = torch.tensor([[[1, 0, 0], [0, 1, 0]]], dtype=torch.float, device=thetas[0].get_device())
         loss = 0
         for t in thetas:
-            loss = loss + self.loss_fn(t, identity)
-        return self.eps * (loss/thetas[0].shape[0]*2)
+            loss += self.loss_fn(t, identity)
+
+        loss /= len(thetas)
+
+        if self.invert:
+            loss = grad_reverse(loss, self.eps)
+        else:
+            loss = grad_rescale(loss, self.eps)
+
+        return loss
 
 
 class GridLoss(nn.Module):
@@ -334,5 +341,7 @@ class ThetaCropsPenalty(nn.Module):
 
         if self.invert:
             loss = grad_reverse(loss, self.eps)
+        else:
+            loss = grad_rescale(loss, self.eps)
 
         return loss

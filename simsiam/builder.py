@@ -12,13 +12,14 @@ class SimSiam(nn.Module):
     """
     Build a SimSiam model.
     """
-    def __init__(self, base_encoder, dim=2048, pred_dim=512):
+    def __init__(self, base_encoder, dim=2048, pred_dim=512, theta_layer_dim=None):
         """
         dim: feature dimension (default: 2048)
         pred_dim: hidden dimension of the predictor (default: 512)
         """
         super(SimSiam, self).__init__()
 
+        self.theta_layer_dim = theta_layer_dim
         # create the encoder
         # num_classes is the output fc dimension, zero-initialize last BNs
         self.encoder = base_encoder(num_classes=dim, zero_init_residual=True)
@@ -40,6 +41,12 @@ class SimSiam(nn.Module):
                                         nn.BatchNorm1d(pred_dim),
                                         nn.ReLU(inplace=True), # hidden layer
                                         nn.Linear(pred_dim, dim)) # output layer
+        
+        self.theta_predictor = None
+        if self.theta_layer_dim:
+            self.theta_predictor = nn.Sequential(nn.Linear(dim+dim, 128),
+                                                 nn.ReLU(inplace=True),
+                                                 nn.Linear(128, self.theta_layer_dim))
 
     def forward(self, x1, x2):
         """
@@ -54,8 +61,12 @@ class SimSiam(nn.Module):
         # compute features for one view
         z1 = self.encoder(x1) # NxC
         z2 = self.encoder(x2) # NxC
-
+        
         p1 = self.predictor(z1) # NxC
         p2 = self.predictor(z2) # NxC
+
+        if self.theta_predictor:
+            theta_pred = self.theta_predictor(torch.cat([p1, p2], dim=1))
+            return theta_pred
 
         return p1, p2, z1.detach(), z2.detach()

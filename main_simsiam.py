@@ -31,6 +31,7 @@ from torch.utils.tensorboard import SummaryWriter
 import yaml
 import copy
 import numpy as np
+from stn import N_PARAMS
 
 from models import resnet_cifar
 
@@ -138,7 +139,7 @@ parser.add_argument("--deep_loc_net", default=False, type=utils.bool_flag,
                     help="(legacy) Set this flag to use a deep loc net. (default: False).")
 parser.add_argument("--stn_res", default=(32, 32), type=int, nargs='+',
                     help="Set the resolution of the global and local crops of the STN (default: 32x and 32x)")
-parser.add_argument("--use_unbounded_stn", default=False, type=utils.bool_flag,
+parser.add_argument("--use_unbounded_stn", default=True, type=utils.bool_flag,
                     help="Set this flag to not use a tanh in the last STN layer (default: use bounded STN).")
 parser.add_argument("--stn_warmup_epochs", default=0, type=int,
                     help="Specifies the number of warmup epochs for the STN (default: 0).")
@@ -152,7 +153,7 @@ parser.add_argument("--penalty_loss", default="", type=str, choices=penalty_list
                     help="Specify the name of the similarity to use.")
 parser.add_argument("--epsilon", default=1., type=float,
                     help="Scalar for the penalty loss")
-parser.add_argument("--invert_penalty", default=False, type=utils.bool_flag,
+parser.add_argument("--invert_penalty", default=True, type=utils.bool_flag,
                     help="Invert the penalty loss.")
 parser.add_argument("--stn_color_augment", default=False, type=utils.bool_flag, help="todo")
 parser.add_argument("--resize_all_inputs", default=False, type=utils.bool_flag,
@@ -182,6 +183,7 @@ parser.add_argument("--stn_ema_momentum", default=0.99, type=int, help="")
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH', help='')
 
 parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
+parser.add_argument('--theta_prediction_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--use_stn', default=True, type=utils.bool_flag, help='for testing reasons')
 
 # simsiam specific configs:
@@ -284,8 +286,12 @@ def main_worker(gpu, ngpus_per_node, args):
     
     # create model
     if args.dataset == 'CIFAR10': 
+        if args.theta_prediction_loss:
+            theta_layer_dim = 6
+        else:
+            theta_layer_dim = None
         print(f"=> creating model {resnet_cifar.resnet18.__name__}")
-        model = simsiam.builder.SimSiam(resnet_cifar.resnet18, args.dim, args.pred_dim)
+        model = simsiam.builder.SimSiam(resnet_cifar.resnet18, args.dim, args.pred_dim, theta_layer_dim=theta_layer_dim)
     elif args.dataset == 'ImageNet':
         print(f"=> creating model {args.arch}")
         model = simsiam.builder.SimSiam(
@@ -403,6 +409,9 @@ def main_worker(gpu, ngpus_per_node, args):
         optim_params = [{'params': model.module.encoder.parameters(), 'fix_lr': False},
                         {'params': model.module.predictor.parameters(), 'fix_lr': True}]
         
+        if args.theta_prediction_loss:
+            optim_params += [{'params': model.module.theta_predictor.parameters(), 'fix_lr': False}]
+
         if not args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             optim_params += [{'params': stn.parameters(), 'fix_lr': False}]
     else:
@@ -632,7 +641,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         penalty = 0
         if args.use_stn:
             if sim_loss:
-                if args.penalty_loss == 'thetacropspenalty':
+                if args.penalty_loss == 'ThetaCropsPenalty':
                     for t in thetas:
                         penalty += sim_loss(thetas=t, crops_scale=args.global_crops_scale)
                 else:
@@ -665,15 +674,8 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         
         # compute output and loss
         penalty_l = penalty * args.penalty_weight
-
-        if not args.four_way_loss:
-            # compute output and loss
-            p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
-            
-            simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
-            total_l = simsiam_l + penalty_l
-
-        else:
+        
+        if args.four_way_loss:
             p1, p2, z1, z2 = model(x1=images, x2=stn_images[0])
             p3, p4, z3, z4 = model(x1=images, x2=stn_images[1])
             simsiam_l1 = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.25
@@ -681,6 +683,24 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
 
             simsiam_l = simsiam_l1 + simsiam_l2
             total_l = simsiam_l + penalty_l
+
+        elif args.theta_prediction_loss:
+            theta1_pred = model(x1=images, x2=stn_images[0])
+            theta2_pred = model(x1=images, x2=stn_images[1])
+            print(theta1_pred.shape)
+            print(theta2_pred.shape)
+            print(thetas[0].shape)
+            print(thetas[1].shape)
+            simsiam_l1 = nn.functional.mse_loss(theta1_pred, thetas[0])
+            simsiam_l2 = nn.functional.mse_loss(theta2_pred, thetas[1])
+            simsiam_l = simsiam_l1 + simsiam_l2
+            total_l = simsiam_l + penalty_l
+        
+        else:
+            p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
+            
+            simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
+            total_l = simsiam_l + penalty_l  
 
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))
