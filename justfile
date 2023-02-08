@@ -31,3 +31,8 @@
    #!/usr/bin/env zsh
    mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}
    sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}} cluster/run_wo_stn.sh
+
+@stn_theta_prediction_loss EXP_NAME MODE:
+   #!/usr/bin/env zsh
+   mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam_dev/simsiam/experiments/{{EXP_NAME}}
+   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam_dev/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam_dev/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}} cluster/run_stn_theta_prediction_loss.sh

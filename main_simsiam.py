@@ -687,12 +687,8 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         elif args.theta_prediction_loss:
             theta1_pred = model(x1=images, x2=stn_images[0])
             theta2_pred = model(x1=images, x2=stn_images[1])
-            print(theta1_pred.shape)
-            print(theta2_pred.shape)
-            print(thetas[0].shape)
-            print(thetas[1].shape)
-            simsiam_l1 = nn.functional.mse_loss(theta1_pred, thetas[0])
-            simsiam_l2 = nn.functional.mse_loss(theta2_pred, thetas[1])
+            simsiam_l1 = nn.functional.mse_loss(theta1_pred, thetas[0].flatten(start_dim=1))
+            simsiam_l2 = nn.functional.mse_loss(theta2_pred, thetas[1].flatten(start_dim=1))
             simsiam_l = simsiam_l1 + simsiam_l2
             total_l = simsiam_l + penalty_l
         

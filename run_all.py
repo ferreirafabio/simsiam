@@ -140,6 +140,7 @@ parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag,
                     help='')
 
 parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
+parser.add_argument('--theta_prediction_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--use_stn', default=True, type=utils.bool_flag, help='for testing reasons')
 
 
