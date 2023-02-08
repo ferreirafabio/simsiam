@@ -518,7 +518,7 @@ def main_worker(gpu, ngpus_per_node, args):
     
     elif args.dataset == 'CIFAR10':
         transform = transforms.Compose([
-                transforms.RandomResizedCrop(32, scale=(0.2, 1.)), # utils.NoneTransform() if args.use_stn else transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                utils.NoneTransform() if args.use_stn else transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
                 transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
                 transforms.RandomGrayscale(p=0.2),  
                 utils.NoneTransform() if args.use_stn else transforms.RandomHorizontalFlip(),
