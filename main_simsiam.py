@@ -178,7 +178,7 @@ parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag,
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
 
 parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
-parser.add_argument("--stn_ema_momentum", default=0.99, type=int, help="")
+parser.add_argument("--stn_ema_momentum", default=0.998, type=int, help="")
 
 parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag, metavar='PATH', help='')
 
