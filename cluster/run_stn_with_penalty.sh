@@ -10,4 +10,4 @@ conda activate metassl2
 
 random_port=$(shuf -i 10003-15000 -n 1)
 
-python run_all.py --dist-url "tcp://localhost:$random_port" --multiprocessing-distributed --world-size 1 --rank 0 --expt-name $EXP_NAME --penalty_loss $PENALTY --epsilon $EPS --penalty_weight $PW --stn_mode $MODE --invert_stn_gradients True --use_stn_optimizer False --pipeline_mode "pretrain" "eval" --epochs 300 --batch-size 2048 --use_unbounded_stn True --invert_penalty True --LR $LR
+python run_all.py --dist-url "tcp://localhost:$random_port" --multiprocessing-distributed --world-size 1 --rank 0 --expt-name $EXP_NAME --penalty_loss $PENALTY --epsilon $EPS --penalty_weight $PW --stn_mode $MODE --invert_stn_gradients True --use_stn_optimizer False --pipeline_mode "pretrain" "eval" --epochs 300 --batch-size 2048 --use_unbounded_stn True --invert_penalty True --lr $LR

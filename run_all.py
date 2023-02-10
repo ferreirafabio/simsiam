@@ -106,7 +106,7 @@ parser.add_argument("--penalty_loss", default="", type=str, choices=penalty_list
                     help="Specify the name of the similarity to use.")
 parser.add_argument("--epsilon", default=1., type=float,
                     help="Scalar for the penalty loss")
-parser.add_argument("--invert_penalty", default=False, type=utils.bool_flag,
+parser.add_argument("--invert_penalty", default=True, type=utils.bool_flag,
                     help="Invert the penalty loss.")
 parser.add_argument("--stn_color_augment", default=False, type=utils.bool_flag, help="todo")
 parser.add_argument("--resize_all_inputs", default=True, type=utils.bool_flag,
@@ -131,6 +131,12 @@ parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag,
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
 parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
 parser.add_argument("--stn_ema_momentum", default=0.998, type=int, help="")
+parser.add_argument("--penalty_target", default='mean', type=str, choices=['zero', 'one', 'mean', 'rand'],
+                        help="Specify the type of target of the penalty. Here, the target is the area with respect to"
+                             "the original image. `zero` and `one` are the values itself. `mean` and `rand` are"
+                             "inferred with respect to given crop-scales.")
+parser.add_argument("--min_glb_overlap", default=0.5, type=float, help="The minimal overlap between the two global crops.")
+parser.add_argument("--min_lcl_overlap", default=0.1, type=float, help="The minimal overlap between two local crops.")
 
 parser.add_argument('--pretrained', default='', type=str,
                     help='path to simsiam pretrained checkpoint')

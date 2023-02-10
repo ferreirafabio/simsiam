@@ -13,7 +13,7 @@ class SummaryWriterCustom(SummaryWriter):
         self.writer = SummaryWriter(out_path)
 
     def write_image_grid(self, tag, stn_images, original_images, epoch):
-        fig = image_grid(stn_images=stn_images, original_images=original_images, epoch=epoch, plot_size=self.plot_size)
+        fig = image_grid(images=stn_images, original_images=original_images, epoch=epoch, plot_size=self.plot_size)
         self.writer.add_figure(tag, fig, global_step=epoch)
         
     def write_theta_heatmap(self, tag, theta, epoch):
@@ -75,29 +75,22 @@ def grad_rescale(x, scale=1.0):
     return GradientRescale.apply(x)
 
 
-def image_grid(stn_images, original_images, epoch, plot_size=16):
+def image_grid(images, original_images, epoch, plot_size=16):
     """Return a 5x5 grid of the MNIST images as a matplotlib figure."""
     # Create a figure to contain the plot.
-    figure = plt.figure(figsize=(20, 50))
-    figure.tight_layout()
+    x = len(images) + 1
     num_images = min(len(original_images), plot_size)
+    figure = plt.figure(figsize=(x, num_images))
     plt.subplots_adjust(hspace=0.5)
 
-    v1 = stn_images[0]
-    v2 = stn_images[1]
-
-    titles = [f"orig@{epoch} epoch", "view 1", "view 2"]
+    titles = [f"orig@{epoch}", "view 1", "view 2"] + [f"local {n+1}" for n in range(len(images))]
     total = 0
     for i in range(num_images):  # orig_img in enumerate(original_images, 1):
-        orig_img = original_images[i]
-        v1_img = v1[i]
-        v2_img = v2[i]
-
-        all_images = [orig_img, v1_img, v2_img]
-        for j in range(3):
+        all_images = [original_images[i]] + [img[i] for img in images]
+        for j in range(len(all_images)):
             total += 1
 
-            plt.subplot(num_images, 3, total, title=titles[j])
+            plt.subplot(num_images, len(all_images), total, title=titles[j])
             plt.xticks([])
             plt.yticks([])
             plt.grid(False)
@@ -112,7 +105,7 @@ def image_grid(stn_images, original_images, epoch, plot_size=16):
                 img = img.squeeze()
 
             plt.imshow(np.clip(img, 0, 1))
-
+    figure.tight_layout()
     return figure
 
 

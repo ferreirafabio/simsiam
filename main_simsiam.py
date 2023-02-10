@@ -176,6 +176,12 @@ parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05,
                     Used for small local view cropping of multi-crop.""")
 parser.add_argument("--warmstart_backbone", default=False, type=utils.bool_flag, help="used to load an already trained backbone and set start_epoch to 0.")
 parser.add_argument("--penalty_weight", default=1, type=int, help="Specifies the weight for the penalty term.")
+parser.add_argument("--penalty_target", default='mean', type=str, choices=['zero', 'one', 'mean', 'rand'],
+                        help="Specify the type of target of the penalty. Here, the target is the area with respect to"
+                             "the original image. `zero` and `one` are the values itself. `mean` and `rand` are"
+                             "inferred with respect to given crop-scales.")
+parser.add_argument("--min_glb_overlap", default=0.5, type=float, help="The minimal overlap between the two global crops.")
+parser.add_argument("--min_lcl_overlap", default=0.1, type=float, help="The minimal overlap between two local crops.")
 
 parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
 parser.add_argument("--stn_ema_momentum", default=0.998, type=int, help="")
@@ -305,7 +311,7 @@ def main_worker(gpu, ngpus_per_node, args):
         stn_ema_updater = utils.EMA(beta=args.stn_ema_momentum)
         find_unused_parameters=True
 
-    sim_loss = None
+    stn_penalty = None
     stn = None
     if args.use_stn:
         transform_net = STN(
@@ -329,14 +335,17 @@ def main_worker(gpu, ngpus_per_node, args):
 
         
         if args.penalty_loss:
-            sim_loss = penalty_dict[args.penalty_loss](
+            stn_penalty = penalty_dict[args.penalty_loss](
                 invert=args.invert_penalty,
+                eps=args.epsilon,
+                target=args.penalty_target,
                 local_crops_scale=args.local_crops_scale,
                 global_crops_scale=args.global_crops_scale,
+                min_glb_overlap=args.min_glb_overlap,
+                min_lcl_overlap=args.min_lcl_overlap,
                 resolution=32,
                 exponent=2,
                 bins=100,
-                eps=args.epsilon,
             ).cuda()
 
     # infer learning rate before changing batch size
@@ -561,7 +570,7 @@ def main_worker(gpu, ngpus_per_node, args):
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, sim_loss)
+        train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, stn_penalty)
 
         is_last_epoch = epoch + 1 >= args.epochs
 
@@ -590,14 +599,14 @@ def main_worker(gpu, ngpus_per_node, args):
         summary_writer.close()
 
 
-def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer=None, sim_loss=None):
+def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer=None, stn_penalty=None):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     simsiam_loss = AverageMeter('SimSiam Loss', ':.4f')
     total_loss = AverageMeter('Total Loss', ':.4f')
     meters = [batch_time, data_time, simsiam_loss]
 
-    if sim_loss:
+    if stn_penalty:
        penalty_loss_meter = AverageMeter('Penalty Loss', ':.6f')
        meters.append(penalty_loss_meter)    
 
@@ -640,12 +649,12 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         # print("stn_images[1].shape: ", stn_images[1].shape) # should be [batch_size/n_gpus, 3, 32, 32]
         penalty = 0
         if args.use_stn:
-            if sim_loss:
+            if stn_penalty:
                 if args.penalty_loss == 'ThetaCropsPenalty':
                     for t in thetas:
-                        penalty += sim_loss(thetas=t, crops_scale=args.global_crops_scale)
+                        penalty += stn_penalty(thetas=t, crops_scale=args.global_crops_scale)
                 else:
-                    penalty = sim_loss(images=stn_images, target=images, thetas=thetas)
+                    penalty = stn_penalty(images=stn_images, target=images, thetas=thetas)
 
         if not args.resize_all_inputs and args.dataset == 'ImageNet' and args.use_stn:
             # in the case of varying image resolutions, we could not color-augment images in DataLoader -> do it here:
@@ -701,7 +710,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))
         
-        if sim_loss and args.use_stn:
+        if stn_penalty and args.use_stn:
             penalty_loss_meter.update(penalty_l.item(), images[0].size(0))
 
         # compute gradient and do SGD step
@@ -734,7 +743,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             summary_writer.write_scalar(tag=tag_loss_simsiam, scalar_value=simsiam_l.item(), epoch=epoch+1)
             summary_writer.write_scalar(tag=tag_lr, scalar_value=optimizer.param_groups[0]["lr"], epoch=epoch+1)
             
-            if sim_loss and not args.use_pretrained_stn and args.use_stn:
+            if stn_penalty and not args.use_pretrained_stn and args.use_stn:
                 summary_writer.write_scalar(tag="Penalty Loss", scalar_value=penalty.item(), epoch=epoch+1)
 
             if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:

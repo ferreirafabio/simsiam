@@ -17,10 +17,10 @@
    mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}
    sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}},PENALTY={{PENALTY}},EPS={{EPS}},PW={{PW}},LR={{LR}} cluster/run_stn_with_penalty.sh
 
-@stn_with_penalty_ema_4way EXP_NAME MODE PENALTY EPS PW LR:
+@stn_with_penalty_ema_4way EXP_NAME MODE PENALTY EPS PW LR INV_PENALTY:
    #!/usr/bin/env zsh
    mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}
-   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}},PENALTY={{PENALTY}},EPS={{EPS}},PW={{PW}},LR={{LR}} cluster/run_stn_with_penalty_ema_four_way.sh
+   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}},PENALTY={{PENALTY}},EPS={{EPS}},PW={{PW}},LR={{LR}},INV_PENALTY={{INV_PENALTY}} cluster/run_stn_with_penalty_ema_four_way.sh
 
 @stn_no_penalty_4way EXP_NAME MODE:
    #!/usr/bin/env zsh
@@ -39,11 +39,17 @@
 
 @stn_theta_prediction_loss EXP_NAME MODE:
    #!/usr/bin/env zsh
-   mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam_dev/simsiam/experiments/{{EXP_NAME}}
-   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam_dev/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam_dev/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}} cluster/run_stn_theta_prediction_loss.sh
+   mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}
+   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}} cluster/run_stn_theta_prediction_loss.sh
 
 
-@stn_with_penalty_ema EXP_NAME MODE PENALTY EPS PW LR:
+@stn_with_penalty_ema EXP_NAME MODE PENALTY EPS PW LR INV_PENALTY:
    #!/usr/bin/env zsh
    mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}
-   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}},PENALTY={{PENALTY}},EPS={{EPS}},PW={{PW}},LR={{LR}} cluster/run_stn_with_penalty_ema.sh
+   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}},PENALTY={{PENALTY}},EPS={{EPS}},PW={{PW}},LR={{LR}},INV_PENALTY={{INV_PENALTY}} cluster/run_stn_with_penalty_ema.sh
+
+
+@stn_with_penalty_ema_long EXP_NAME MODE PENALTY EPS PW LR INV_PENALTY:
+   #!/usr/bin/env zsh
+   mkdir -p /work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}
+   sbatch --output=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --error=/work/dlclarge1/ferreira-simsiam/simsiam/experiments/{{EXP_NAME}}/%x.%A.%a.%N.err_out --export=EXP_NAME={{EXP_NAME}},MODE={{MODE}},PENALTY={{PENALTY}},EPS={{EPS}},PW={{PW}},LR={{LR}},INV_PENALTY={{INV_PENALTY}} cluster/run_stn_with_penalty_ema_long_training.sh
