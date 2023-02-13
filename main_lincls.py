@@ -110,7 +110,7 @@ parser.add_argument('--lars', action='store_true',
 best_acc1 = 0
 
 
-def main(kwargs=None):
+def main(kwargs=None, working_dir=None):
     args, unknown = parser.parse_known_args()
     if kwargs is not None:
         for k, v in vars(kwargs).items():
@@ -120,13 +120,18 @@ def main(kwargs=None):
                 print(f"{k} not in args")
 
     # Saving checkpoint and config pased on experiment mode
-    expt_dir = "experiments"
-    expt_sub_dir = os.path.join(expt_dir, args.expt_name)
+    # expt_dir = "experiments"
+    # expt_sub_dir = os.path.join(expt_dir, args.expt_name)
 
-    args.expt_dir = pathlib.Path(expt_sub_dir)
+    # args.expt_dir = pathlib.Path(expt_sub_dir)
 
-    if not os.path.exists(expt_sub_dir):
-        os.makedirs(expt_sub_dir)
+    # if not os.path.exists(expt_sub_dir):
+        # os.makedirs(expt_sub_dir)
+    
+    expt_sub_dir = working_dir
+    args.expt_dir = working_dir
+    if not os.path.exists(args.expt_dir):
+        os.makedirs(args.expt_dir)
 
     args_dict = vars(args)
     print(args_dict)
@@ -155,19 +160,29 @@ def main(kwargs=None):
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
     ngpus_per_node = torch.cuda.device_count()
-    if args.multiprocessing_distributed:
-        # Since we have ngpus_per_node processes per node, the total world_size
-        # needs to be adjusted accordingly
-        args.world_size = ngpus_per_node * args.world_size
-        # Use torch.multiprocessing.spawn to launch distributed processes: the
-        # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-    else:
-        # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args)
+    res_save_path = os.path.join(expt_sub_dir, f"result.yaml")
+    
+    try:
+        if args.multiprocessing_distributed:
+            # Since we have ngpus_per_node processes per node, the total world_size
+            # needs to be adjusted accordingly
+            args.world_size = ngpus_per_node * args.world_size
+            # Use torch.multiprocessing.spawn to launch distributed processes: the
+            # main_worker process function
+            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, res_save_path))
+        else:
+            # Simply call main_worker function
+            main_worker(args.gpu, ngpus_per_node, args)
+        
+        dct = yaml.safe_load(res_save_path)
+        return dct['acc1']
+    except Exception as e:
+        print(e)
+        return float('inf')
 
 
-def main_worker(gpu, ngpus_per_node, args):
+
+def main_worker(gpu, ngpus_per_node, args, res_save_path):
     global best_acc1
     args.gpu = gpu
 
@@ -370,8 +385,9 @@ def main_worker(gpu, ngpus_per_node, args):
 
         # evaluate on validation set
         acc1 = validate(val_loader, model, criterion, args)
-        if args.rank == 0:
-            writer.add_scalar('acc1 (avg)', acc1, epoch)
+        
+        #if args.rank == 0:
+        #    writer.add_scalar('acc1 (avg)', acc1, epoch)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -395,7 +411,10 @@ def main_worker(gpu, ngpus_per_node, args):
         #        and args.rank % ngpus_per_node == 0) and epoch % args.save_freq==0:
         #    save_checkpoint(save_dict, is_best, filename=os.path.join(args.expt_dir,'checkpoint_lincls_{:04d}.pth.tar'.format(epoch)), expt_dir=args.expt_dir)
 
-
+    if args.rank == 0:
+        with open(res_save_path, 'w') as yaml_file:
+            yaml.dump({'acc1': acc1}, yaml_file)
+        
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -585,7 +604,6 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
-
 
 if __name__ == '__main__':
     main()

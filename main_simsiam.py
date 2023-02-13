@@ -111,7 +111,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 parser.add_argument('--dataset', default='s', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
 parser.add_argument('--expt-name', default='default_experiment', type=str, help='Name of the experiment')
-parser.add_argument('--save-freq', default=50, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
+parser.add_argument('--save-freq', default=100, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
 
 # STN
 parser.add_argument("--invert_stn_gradients", default=True, type=utils.bool_flag,
@@ -127,9 +127,9 @@ parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=25, type=int, 
+parser.add_argument("--summary_writer_freq", default=50, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
-parser.add_argument("--grad_check_freq", default=50, type=int,
+parser.add_argument("--grad_check_freq", default=100, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
 parser.add_argument("--summary_plot_size", default=16, type=int,
                     help="Defines the number of samples to show in the summary writer.")
@@ -203,7 +203,7 @@ parser.add_argument('--fix-pred-lr', action='store_true',
                     "pre-process images solely.""")
 
 
-def main(kwargs=None):
+def main(kwargs=None, working_dir=None):
     args, unknown = parser.parse_known_args()
     # overload args with kwargs
     if kwargs is not None:
@@ -214,13 +214,19 @@ def main(kwargs=None):
                 print(f"{k} not in args. Not setting it.")
 
     # Saving checkpoint and config pased on experiment mode
-    expt_dir = "experiments"
-    expt_sub_dir = os.path.join(expt_dir, args.expt_name)
+    # expt_dir = "experiments"
+    # expt_sub_dir = os.path.join(expt_dir, args.expt_name)
 
-    args.expt_dir = pathlib.Path(expt_sub_dir)
+    # args.expt_dir = pathlib.Path(expt_sub_dir)
 
-    if not os.path.exists(expt_sub_dir):
-        os.makedirs(expt_sub_dir)
+    # if not os.path.exists(expt_sub_dir):
+        # os.makedirs(expt_sub_dir)
+
+    expt_sub_dir = working_dir
+    args.expt_dir = working_dir
+
+    if not os.path.exists(args.expt_dir):
+        os.makedirs(args.expt_dir)
 
     assert args.local_crops_number == 0, "SimSiam only uses two views, so local_crops_number must be 0"
 
@@ -255,16 +261,19 @@ def main(kwargs=None):
 
     ngpus_per_node = torch.cuda.device_count()
     print("ngpus per node", ngpus_per_node)
-    if args.multiprocessing_distributed:
-        # Since we have ngpus_per_node processes per node, the total world_size
-        # needs to be adjusted accordingly
-        args.world_size = ngpus_per_node * args.world_size
-        # Use torch.multiprocessing.spawn to launch distributed processes: the
-        # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-    else:
-        # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args)
+    try:
+        if args.multiprocessing_distributed:
+            # Since we have ngpus_per_node processes per node, the total world_size
+            # needs to be adjusted accordingly
+            args.world_size = ngpus_per_node * args.world_size
+            # Use torch.multiprocessing.spawn to launch distributed processes: the
+            # main_worker process function
+            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+        else:
+            # Simply call main_worker function
+            main_worker(args.gpu, ngpus_per_node, args)
+    except Exception as e:
+        return float('inf')
 
 
 def main_worker(gpu, ngpus_per_node, args):
@@ -332,8 +341,7 @@ def main_worker(gpu, ngpus_per_node, args):
         resize_input=args.resize_input,
         resize_size=args.resize_size,
         )
-
-        
+      
         if args.penalty_loss:
             stn_penalty = penalty_dict[args.penalty_loss](
                 invert=args.invert_penalty,
@@ -570,7 +578,11 @@ def main_worker(gpu, ngpus_per_node, args):
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, stn_penalty)
+        try:
+            train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, stn_penalty)
+        except ValueError as e:
+            print(e)
+            
 
         is_last_epoch = epoch + 1 >= args.epochs
 
@@ -643,10 +655,6 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
                 thetas[1] = thetas_target[1]
                 stn_images[1] = stn_images_target[1]
 
-        # print("len(stn_images) (should be 2): ", len(stn_images))
-        # print("stn_images: ", stn_images)
-        # print("stn_images[0].shape: ", stn_images[0].shape) # should be [batch_size/n_gpus, 3, 32, 32]
-        # print("stn_images[1].shape: ", stn_images[1].shape) # should be [batch_size/n_gpus, 3, 32, 32]
         penalty = 0
         if args.use_stn:
             if stn_penalty:
@@ -705,7 +713,10 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
             
             simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
-            total_l = simsiam_l + penalty_l  
+            total_l = simsiam_l + penalty_l
+
+        if math.isnan(total_l.item()):
+            raise ValueError('Loss is NaN')
 
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))

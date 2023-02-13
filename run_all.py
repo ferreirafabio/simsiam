@@ -6,6 +6,19 @@ import utils
 import time
 import os
 import penalties
+import datetime
+import sys
+import ConfigSpace as CS
+from ConfigSpace import InCondition, EqualsCondition, NotEqualsCondition 
+import ConfigSpace.hyperparameters as CSH
+from copy import deepcopy
+from bohb_optim import run_bohb_parallel
+from argparse import Namespace
+import pathlib
+
+import logging
+logging.basicConfig(level=logging.WARNING)
+
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -13,6 +26,7 @@ model_names = sorted(name for name in models.__dict__
 
 penalty_list = sorted(name for name in penalties.__dict__
                       if name[0].isupper() and not name.startswith("__") and callable(penalties.__dict__[name]))
+
 penalty_dict = {
     penalty: penalties.__dict__[penalty] for penalty in penalty_list
 }
@@ -26,11 +40,11 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                         ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=800, type=int, metavar='N',
+parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=2048, type=int,
+parser.add_argument('-b', '--batch-size', default=512, type=int,
                     metavar='N',
                     help='mini-batch size (default: 2048), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -64,7 +78,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 parser.add_argument('--dataset', default='CIFAR10', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
 parser.add_argument('--expt-name', default='default_experiment', type=str, help='Name of the experiment')
-parser.add_argument('--save-freq', default=50, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
+parser.add_argument('--save-freq', default=100, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
 
 # STN
 parser.add_argument("--invert_stn_gradients", default=True, type=utils.bool_flag,
@@ -80,9 +94,9 @@ parser.add_argument("--stn_lr", default=5e-5, type=float, help="""Learning rate 
                     with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument("--separate_localization_net", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate localization network for each head.")
-parser.add_argument("--summary_writer_freq", default=25, type=int, 
+parser.add_argument("--summary_writer_freq", default=50, type=int, 
 help="Defines the number of iterations the summary writer will write output.")
-parser.add_argument("--grad_check_freq", default=50, type=int,
+parser.add_argument("--grad_check_freq", default=100, type=int,
                     help="Defines the number of iterations the current tensor grad of the global 1 localization head is printed to stdout.")
 parser.add_argument("--summary_plot_size", default=16, type=int,
                     help="Defines the number of samples to show in the summary writer.")
@@ -135,7 +149,7 @@ parser.add_argument("--penalty_target", default='mean', type=str, choices=['zero
                         help="Specify the type of target of the penalty. Here, the target is the area with respect to"
                              "the original image. `zero` and `one` are the values itself. `mean` and `rand` are"
                              "inferred with respect to given crop-scales.")
-parser.add_argument("--min_glb_overlap", default=0.5, type=float, help="The minimal overlap between the two global crops.")
+parser.add_argument("--min_glb_overlap", default=0.7, type=float, help="The minimal overlap between the two global crops.")
 parser.add_argument("--min_lcl_overlap", default=0.1, type=float, help="The minimal overlap between two local crops.")
 
 parser.add_argument('--pretrained', default='', type=str,
@@ -160,8 +174,162 @@ parser.add_argument('--fix-pred-lr', action='store_true',
                     "If specified, the STN is not trained and used to 
                     "pre-process images solely.""")
 
-parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+',
-                    help="")
+parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+', help="")
+
+# BOHB
+parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=3)
+parser.add_argument('--is_worker', help='Flag to turn this into a worker process', type=utils.bool_flag, default=True)
+parser.add_argument('--run_id', type=str, help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.')
+
+
+class ExperimentWrapper():
+    def get_bohb_parameters(self):
+        params = {}
+        params['min_budget'] = 1
+        params['max_budget'] = 8
+        params['eta'] = 2
+        params['iterations'] = 1000
+        params['random_fraction'] = 0.3
+
+        return params
+
+    def get_configspace(self):
+        cs = CS.ConfigurationSpace()
+        
+        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='lr', lower=1e-5, upper=0.1, log=True, default_value=0.01))
+        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='weight_decay', lower=1e-5, upper=0.005, log=True, default_value=0.0005))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='invert_stn_gradients', choices=[True, False], default_value=True))
+        
+        stn_optimizer = CSH.CategoricalHyperparameter(name='use_stn_optimizer', choices=[True, False], default_value=False)
+        cs.add_hyperparameter(stn_optimizer)
+
+        stn_lr = CSH.UniformFloatHyperparameter(name='stn_lr', lower=1e-5, upper=0.1, log=True, default_value=0.0001)
+        cs.add_hyperparameter(stn_lr)
+
+        cond = InCondition(stn_lr, stn_optimizer, [True])
+        cs.add_condition(cond)
+
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='separate_localization_net', choices=[True, False], default_value=False))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='use_unbounded_stn', choices=[True, False], default_value=False))
+
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv1_depth', choices=[16, 32, 64], default_value=32))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv2_depth', choices=[16, 32, 64], default_value=32))
+
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_theta_norm', choices=[True, False], default_value=True))
+
+        penalty_loss = CSH.CategoricalHyperparameter(name='penalty_loss', choices=penalty_list+[""], default_value="")
+        cs.add_hyperparameter(penalty_loss)
+
+        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='epsilon', lower=0.001, upper=5000, log=True, default_value=1.))
+        
+        invert_penalty = CSH.CategoricalHyperparameter(name='invert_penalty', choices=[True, False], default_value=True)
+        cs.add_hyperparameter(invert_penalty)
+
+        cond = NotEqualsCondition(invert_penalty, penalty_loss, "")
+        cs.add_condition(cond)
+
+        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='penalty_weight', lower=0.01, upper=100, log=True, default_value=1.))
+
+        ema = CSH.CategoricalHyperparameter(name='stn_ema_update', choices=[True, False], default_value=False)
+        cs.add_hyperparameter(ema)
+
+        ema_momentum = CSH.UniformFloatHyperparameter(name='stn_ema_momentum', lower=0.5, upper=0.999, log=True, default_value=0.998)
+        cs.add_hyperparameter(ema_momentum)
+
+        cond = InCondition(ema_momentum, ema, [True])
+        cs.add_condition(cond)
+
+        min_glb_overlap = CSH.UniformFloatHyperparameter(name='min_glb_overlap', lower=0.01, upper=100, log=True, default_value=0.5)
+        cs.add_hyperparameter(min_glb_overlap)
+        
+        cond = EqualsCondition(min_glb_overlap, penalty_loss, 'OverlapPenalty')
+        cs.add_condition(cond)
+
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='four_way_loss', choices=[True, False], default_value=False))
+
+        return cs
+
+    def get_specific_config(self, cso, default_config, budget):
+        config = deepcopy(default_config)
+        return config
+
+
+    def compute(self, config_id, config, budget, working_dir, default_config, **kwargs):
+        print("--------------sampled config--------------")
+        for k, v in config.items():
+            print(f"{k}: {v}")
+            
+        config_id_formated = "_".join(map(str, config_id))
+        set_args(default_config, config)
+
+        working_expt_dir = pathlib.Path(f'{working_dir}/{config_id_formated}')
+        default_config.expt_name = working_expt_dir
+    
+        print('----------------------------')
+        print("START BOHB ITERATION")
+        print('CONFIG: ' + str(default_config))
+        print('BUDGET: ' + str(budget))
+        print('----------------------------')
+
+        info = {}
+        info['config'] = str(default_config)
+
+        stn_train_dct = {
+            "epochs": 300,
+            "use_pretrained_stn": False,
+        }
+
+        linear_eval_dct = {
+            "lr": 0.1,
+            "weight_decay": 0.0,
+            "epochs": 90,
+            "batch_size": 2048,
+            "momentum": 0.9,
+            "pretrained": f"{default_config.expt_name}/checkpoint_training_stn.pth.tar",
+            "resume": f"{default_config.expt_name}/checkpoint_linear_eval.pth.tar",
+        }
+
+        # STN training
+        if 'pretrain' in default_config.pipeline_mode:
+            set_args(default_config, stn_train_dct)
+            print("==> starting STN training.")
+            try:
+                run_simiam(default_config, working_expt_dir)
+            except ValueError as e:
+                print(e)
+                print("==> STN training failed.")
+                return {
+                    "loss": float('inf'),
+                    "info": info
+                }
+            print("==> finished STN training.")
+
+        # Linear evaluation
+        if 'eval' in default_config.pipeline_mode:
+            set_args(default_config, linear_eval_dct)
+            print(f"==> starting linear eval with checkpoint {default_config.pretrained} (or checkpoint_linear_eval.pth.tar if exists).")
+            try:
+                score = run_linear(default_config, working_expt_dir)
+            except Exception as e:
+                print(e)
+                print("==> linear eval failed.")
+                return {
+                    "loss": float('inf'),
+                    "info": info
+                }
+            print("==> finished linear eval")
+
+
+        print('----------------------------')
+        print('FINAL SCORE: ' + str(-score))
+        print("END BOHB ITERATION")
+        print('----------------------------')
+
+        return {
+            "loss": -score,
+            "info": info
+        }
+
 
 def set_args(outer_args, dct):
     for k, v in dct.items():
@@ -171,63 +339,18 @@ def set_args(outer_args, dct):
             print(f"{k} not in args. Not setting it.")
 
 
-if __name__ == '__main__':
-        outer_args = parser.parse_args()
+if __name__ == "__main__":
+    outer_args = parser.parse_args()
+    assert all([mode in ['pretrain', 'frozen', 'eval'] for mode in outer_args.pipeline_mode]), "pipeline_mode must be one of ['pretrain', 'frozen', 'eval']"
 
-        
-        assert all([mode in ['pretrain', 'frozen', 'eval'] for mode in outer_args.pipeline_mode]), "pipeline_mode must be one of ['pretrain', 'frozen', 'eval']"
+    x = datetime.datetime.now()
+    working_dir = f'experiments/bohb_simsiam_{outer_args.run_id}'
 
-        print(f"running pipeline mode: {outer_args.pipeline_mode}")
+    print(f"Working dir: {working_dir}")
 
-        if outer_args.epochs is not None:
-            epochs = outer_args.epochs
-        elif "frozen" in outer_args.pipeline_mode:
-            epochs = 100
-        else:   
-            epochs = 800
-
-        stn_train_dct = {
-            "epochs": epochs,
-            "use_pretrained_stn": False,
-        }
-
-        frozen_stn_dct = {
-            "epochs": 800,
-            "use_pretrained_stn": True,
-        }
-
-        linear_eval_dct = {
-            "lr": 0.1,
-            "weight_decay": 0.0,
-            "epochs": 90,
-            "batch_size": 2048,
-            "momentum": 0.9,
-            "pretrained": f"experiments/{outer_args.expt_name}/checkpoint_frozen_stn.pth.tar" if "frozen" in outer_args.pipeline_mode else f"experiments/{outer_args.expt_name}/checkpoint_training_stn.pth.tar",
-            "resume": f"experiments/{outer_args.expt_name}/checkpoint_linear_eval.pth.tar",
-        }
-
-        # STN training
-        if 'pretrain' in outer_args.pipeline_mode:
-            set_args(outer_args, stn_train_dct)
-            print("==> starting STN training.")
-            run_simiam(outer_args)
-            print("==> finished STN training.")
-        
-            time.sleep(10)
-
-        # Frozen STN, standard pre-training
-        if 'frozen' in outer_args.pipeline_mode:
-            set_args(outer_args, frozen_stn_dct)
-            print("==> starting standard pre-training with frozen STN.")
-            run_simiam(outer_args)
-            print("==> finished pre-training with frozen STN")
-            
-            time.sleep(10)
-
-
-        # Run linear evaluation
-        if 'eval' in outer_args.pipeline_mode:
-            set_args(outer_args, linear_eval_dct)
-            print(f"==> starting linear eval with checkpoint {outer_args.pretrained} (or checkpoint_linear_eval.pth.tar if exists).")
-            run_linear(outer_args)
-            print("==> finished linear eval")
+    res = run_bohb_parallel(run_id=outer_args.run_id,
+                            bohb_workers=outer_args.n_workers,
+                            experiment_wrapper=ExperimentWrapper(),
+                            working_dir=working_dir,
+                            is_worker=outer_args.is_worker, 
+                            default_config=outer_args)

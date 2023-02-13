@@ -260,56 +260,56 @@ class OverlapPenalty(nn.Module):
         return x * y / 4.
         
 
-class HSIM(nn.Module):
-    def __init__(self, exponent=1):
-        super(HSIM, self).__init__()
-        self.exponent = exponent
+# class HSIM(nn.Module):
+#     def __init__(self, exponent=1):
+#         super(HSIM, self).__init__()
+#         self.exponent = exponent
 
-    def forward(self, pred, target):
-        t = histogram_batch(target)
-        p = histogram_batch(pred)
-        m = torch.min(p, t)
-        mask = (p == 0).to(p.dtype)
-        p = p + mask
-        score = torch.sum(torch.pow(m / p, self.exponent)) / t.shape.numel()
-        return score
-
-
-class HISTLoss(nn.Module):
-    def __init__(self, bins=100, exponent=2, invert=False, **kwargs):
-        super().__init__()
-        self.bins = bins
-        self.exponent = exponent
-        self.invert = -1 if invert else 1
-        self.fn = HSIM()
-
-    def forward(self, input, target):
-        if isinstance(target, list):
-            target = torch.stack(target)
-        loss = 0
-        for crop in input:
-            score = self.fn(crop, target)
-            step = 1 - score
-            loss += step
-        return self.invert * loss
+#     def forward(self, pred, target):
+#         t = histogram_batch(target)
+#         p = histogram_batch(pred)
+#         m = torch.min(p, t)
+#         mask = (p == 0).to(p.dtype)
+#         p = p + mask
+#         score = torch.sum(torch.pow(m / p, self.exponent)) / t.shape.numel()
+#         return score
 
 
-class SIMLoss(nn.Module):
-    def __init__(self, resolution: int, min_sim: float = 1., invert=False, **kwargs):
-        super().__init__()
-        self.loss_fn = SSIM()
-        self.resize = transforms.Resize(resolution)
-        self.min_sim = 1 - min_sim
-        self.invert = -1 if invert else 1
+# class HISTLoss(nn.Module):
+#     def __init__(self, bins=100, exponent=2, invert=False, **kwargs):
+#         super().__init__()
+#         self.bins = bins
+#         self.exponent = exponent
+#         self.invert = -1 if invert else 1
+#         self.fn = HSIM()
 
-    def forward(self, images, target, **kwargs):
-        target = self.resize(torch.stack(target))
-        loss = 0
-        for img in images:
-            step = 1 - self.loss_fn(self.resize(img), target)
-            step[step < self.min_sim] = 0
-            loss += step
-        return self.invert * loss
+#     def forward(self, input, target):
+#         if isinstance(target, list):
+#             target = torch.stack(target)
+#         loss = 0
+#         for crop in input:
+#             score = self.fn(crop, target)
+#             step = 1 - score
+#             loss += step
+#         return self.invert * loss
+
+
+# class SIMLoss(nn.Module):
+#     def __init__(self, resolution: int, min_sim: float = 1., invert=False, **kwargs):
+#         super().__init__()
+#         self.loss_fn = SSIM()
+#         self.resize = transforms.Resize(resolution)
+#         self.min_sim = 1 - min_sim
+#         self.invert = -1 if invert else 1
+
+#     def forward(self, images, target, **kwargs):
+#         target = self.resize(torch.stack(target))
+#         loss = 0
+#         for img in images:
+#             step = 1 - self.loss_fn(self.resize(img), target)
+#             step[step < self.min_sim] = 0
+#             loss += step
+#         return self.invert * loss
 
 
 class ThetaLoss(nn.Module):
@@ -335,24 +335,24 @@ class ThetaLoss(nn.Module):
         return loss
 
 
-class GridLoss(nn.Module):
-    """
-    Actually not needed. It is the same as the ThetaLoss.
-    """
+# class GridLoss(nn.Module):
+#     """
+#     Actually not needed. It is the same as the ThetaLoss.
+#     """
 
-    def __init__(self, device=torch.device('cuda'), **kwargs):
-        super().__init__()
-        self.identity = torch.tensor([[[1, 0, 0], [0, 1, 0]]], dtype=torch.float, device=device)
-        self.loss_fn = nn.MSELoss()
+#     def __init__(self, device=torch.device('cuda'), **kwargs):
+#         super().__init__()
+#         self.identity = torch.tensor([[[1, 0, 0], [0, 1, 0]]], dtype=torch.float, device=device)
+#         self.loss_fn = nn.MSELoss()
 
-    def forward(self, grid, **kwargs):
-        loss = 0
-        for g in grid:
-            size = [g.size(0), 1, g.size(1), g.size(2)]
-            identity = self.identity.expand(g.size(0), 2, 3)
-            grid_identity = F.affine_grid(identity, size)
-            loss = loss + self.loss_fn(g, grid_identity)
-        return loss
+#     def forward(self, grid, **kwargs):
+#         loss = 0
+#         for g in grid:
+#             size = [g.size(0), 1, g.size(1), g.size(2)]
+#             identity = self.identity.expand(g.size(0), 2, 3)
+#             grid_identity = F.affine_grid(identity, size)
+#             loss = loss + self.loss_fn(g, grid_identity)
+#         return loss
 
 
 class ThetaCropsPenalty(nn.Module):
