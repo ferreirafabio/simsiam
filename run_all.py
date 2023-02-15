@@ -26,7 +26,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                         ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=800, type=int, metavar='N',
+parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -42,6 +42,11 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=0.0005, type=float,
                     metavar='W', help='weight decay (default: 0.0005)',
                     dest='weight_decay')
+                    
+parser.add_argument('--stn-wd', '--stn-weight-decay', default=0.0005, type=float,
+                    metavar='W', help='',
+                    dest='stn_weight_decay')
+
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--world-size', default=-1, type=int,
