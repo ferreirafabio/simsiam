@@ -17,7 +17,7 @@ from argparse import Namespace
 import pathlib
 
 import logging
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.DEBUG)
 
 
 model_names = sorted(name for name in models.__dict__
@@ -44,7 +44,7 @@ parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=512, type=int,
+parser.add_argument('-b', '--batch-size', default=1024, type=int,
                     metavar='N',
                     help='mini-batch size (default: 2048), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -56,6 +56,10 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=0.0005, type=float,
                     metavar='W', help='weight decay (default: 0.0005)',
                     dest='weight_decay')
+parser.add_argument('--stn-wd', '--stn-weight-decay', default=0.0005, type=float,
+                    metavar='W', help='',
+                    dest='stn_weight_decay')
+
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--world-size', default=-1, type=int,
@@ -86,7 +90,7 @@ parser.add_argument("--invert_stn_gradients", default=True, type=utils.bool_flag
 parser.add_argument("--use_stn_optimizer", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate optimizer for the STN parameters; "
                             "annealed with cosine and no warmup")
-parser.add_argument('--stn_mode', default='affine', type=str,
+parser.add_argument('--stn_mode', default='translation_scale_symmetric', type=str,
                     help='Determines the STN mode (choose from: affine, translation, scale, rotation, '
                             'rotation_scale, translation_scale, rotation_translation, rotation_translation_scale')
 parser.add_argument("--stn_lr", default=5e-5, type=float, help="""Learning rate at the end of
@@ -149,7 +153,7 @@ parser.add_argument("--penalty_target", default='mean', type=str, choices=['zero
                         help="Specify the type of target of the penalty. Here, the target is the area with respect to"
                              "the original image. `zero` and `one` are the values itself. `mean` and `rand` are"
                              "inferred with respect to given crop-scales.")
-parser.add_argument("--min_glb_overlap", default=0.7, type=float, help="The minimal overlap between the two global crops.")
+parser.add_argument("--min_glb_overlap", default=0.6, type=float, help="The minimal overlap between the two global crops.")
 parser.add_argument("--min_lcl_overlap", default=0.1, type=float, help="The minimal overlap between two local crops.")
 
 parser.add_argument('--pretrained', default='', type=str,
@@ -177,7 +181,7 @@ parser.add_argument('--fix-pred-lr', action='store_true',
 parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+', help="")
 
 # BOHB
-parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=3)
+parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=10)
 parser.add_argument('--is_worker', help='Flag to turn this into a worker process', type=utils.bool_flag, default=True)
 parser.add_argument('--run_id', type=str, help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.')
 
@@ -198,6 +202,10 @@ class ExperimentWrapper():
         
         cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='lr', lower=1e-5, upper=0.1, log=True, default_value=0.01))
         cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='weight_decay', lower=1e-5, upper=0.005, log=True, default_value=0.0005))
+        
+        stn_wd = CSH.UniformFloatHyperparameter(name='stn_weight_decay', lower=1e-5, upper=0.005, log=True, default_value=0.0005)
+        cs.add_hyperparameter(stn_wd)
+
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='invert_stn_gradients', choices=[True, False], default_value=True))
         
         stn_optimizer = CSH.CategoricalHyperparameter(name='use_stn_optimizer', choices=[True, False], default_value=False)
@@ -206,14 +214,17 @@ class ExperimentWrapper():
         stn_lr = CSH.UniformFloatHyperparameter(name='stn_lr', lower=1e-5, upper=0.1, log=True, default_value=0.0001)
         cs.add_hyperparameter(stn_lr)
 
+        cond = InCondition(stn_wd, stn_optimizer, [True])
+        cs.add_condition(cond)
+
         cond = InCondition(stn_lr, stn_optimizer, [True])
         cs.add_condition(cond)
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='separate_localization_net', choices=[True, False], default_value=False))
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='use_unbounded_stn', choices=[True, False], default_value=False))
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv1_depth', choices=[16, 32, 64], default_value=32))
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv2_depth', choices=[16, 32, 64], default_value=32))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv1_depth', choices=[8, 16, 32], default_value=16))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv2_depth', choices=[8, 16, 32], default_value=16))
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_theta_norm', choices=[True, False], default_value=True))
 
@@ -239,13 +250,23 @@ class ExperimentWrapper():
         cond = InCondition(ema_momentum, ema, [True])
         cs.add_condition(cond)
 
-        min_glb_overlap = CSH.UniformFloatHyperparameter(name='min_glb_overlap', lower=0.01, upper=100, log=True, default_value=0.5)
+        min_glb_overlap = CSH.UniformFloatHyperparameter(name='min_glb_overlap', lower=0.01, upper=0.9, log=True, default_value=0.5)
         cs.add_hyperparameter(min_glb_overlap)
         
         cond = EqualsCondition(min_glb_overlap, penalty_loss, 'OverlapPenalty')
         cs.add_condition(cond)
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='four_way_loss', choices=[True, False], default_value=False))
+
+        global_crops_scale = CSH.CategoricalHyperparameter(name='global_crops_scale', choices=[(0.4, 1.), (0.6, 1.), (0.8, 1.), (0.9, 1.), (0.1, 1.), (0.1, 0.8)], default_value=(0.4, 1.))
+        cs.add_hyperparameter(global_crops_scale)
+
+        cond = EqualsCondition(global_crops_scale, penalty_loss, 'OverlapPenalty')
+        cs.add_condition(cond)
+
+        # cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_mode', 
+        # choices=["affine", "translation_scale_symmetric", "rotation_translation_scale_symmetric", 
+        # "rotation_scale_symmetric"], default_value="translation_scale_symmetric"))
 
         return cs
 
@@ -295,8 +316,9 @@ class ExperimentWrapper():
             print("==> starting STN training.")
             try:
                 run_simiam(default_config, working_expt_dir)
-            except ValueError as e:
+            except Exception as e:
                 print(e)
+                info["exception"] = e
                 print("==> STN training failed.")
                 return {
                     "loss": float('inf'),
@@ -312,6 +334,7 @@ class ExperimentWrapper():
                 score = run_linear(default_config, working_expt_dir)
             except Exception as e:
                 print(e)
+                info["exception"] = e
                 print("==> linear eval failed.")
                 return {
                     "loss": float('inf'),

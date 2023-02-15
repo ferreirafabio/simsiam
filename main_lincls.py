@@ -173,12 +173,13 @@ def main(kwargs=None, working_dir=None):
         else:
             # Simply call main_worker function
             main_worker(args.gpu, ngpus_per_node, args)
+
+        with open(res_save_path, "r") as f:
+            dct = yaml.load(f, Loader=yaml.Loader)
+            return dct['acc1']           
         
-        dct = yaml.safe_load(res_save_path)
-        return dct['acc1']
     except Exception as e:
-        print(e)
-        return float('inf')
+        raise e
 
 
 
@@ -374,7 +375,7 @@ def main_worker(gpu, ngpus_per_node, args, res_save_path):
     if args.evaluate:
         validate(val_loader, model, criterion, args)
         return
-
+    acc1 = None
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -411,10 +412,12 @@ def main_worker(gpu, ngpus_per_node, args, res_save_path):
         #        and args.rank % ngpus_per_node == 0) and epoch % args.save_freq==0:
         #    save_checkpoint(save_dict, is_best, filename=os.path.join(args.expt_dir,'checkpoint_lincls_{:04d}.pth.tar'.format(epoch)), expt_dir=args.expt_dir)
 
+    if acc1 is None:
+        acc1 = validate(val_loader, model, criterion, args)
+        
     if args.rank == 0:
         with open(res_save_path, 'w') as yaml_file:
-            yaml.dump({'acc1': acc1}, yaml_file)
-        
+            yaml.dump(data={'acc1': float(acc1)}, stream=yaml_file)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):

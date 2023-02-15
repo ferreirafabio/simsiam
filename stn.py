@@ -99,6 +99,9 @@ class LocHead(nn.Module):
         self.mode = mode
         self.stn_n_params = N_PARAMS[mode]
         self.feature_dim = feature_dim
+        self.norm1 = nn.LayerNorm(feature_dim)	
+        self.norm2 = nn.LayerNorm(128)	
+        self.norm3 = nn.LayerNorm(64)
         self.linear0 = nn.Linear(feature_dim, 128)
         self.linear1 = nn.Linear(128, 64)
         self.linear2 = nn.Linear(64, self.stn_n_params)
@@ -109,8 +112,11 @@ class LocHead(nn.Module):
 
     def forward(self, x):
         xs = torch.flatten(x, 1)
+        xs = self.norm1(xs)
         xs = F.leaky_relu(self.linear0(xs))
+        xs = self.norm2(xs)
         xs = F.leaky_relu(self.linear1(xs))
+        xs = self.norm3(xs)
         xs = self.linear2(xs)
         return xs
 
@@ -122,7 +128,7 @@ class LocNet(nn.Module):
 
     def __init__(self, mode: str = 'affine', invert_gradient: bool = False,
                  num_heads: int = 4, separate_backbones: bool = False,
-                 conv1_depth: int = 16, conv2_depth: int = 32, avgpool: int = 8):
+                 conv1_depth: int = 32, conv2_depth: int = 32, avgpool: int = 8):
         super().__init__()
         self.mode = mode
         self.invert_gradient = invert_gradient

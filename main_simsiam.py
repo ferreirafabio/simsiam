@@ -40,18 +40,9 @@ import simsiam.builder
 
 import utils
 import penalties
-from utils import SummaryWriterCustom, custom_collate
+from utils import SummaryWriterCustom, custom_collate, get_stn_transforms, normalize_cifar10, normalize_imagenet
 from stn import AugmentationNetwork, STN
 
-normalize_imagenet = transforms.Normalize(
-    mean=[0.485, 0.456, 0.406],
-    std=[0.229, 0.224, 0.225]
-)
-
-normalize_cifar10 = transforms.Normalize(
-    mean=[0.4914, 0.4822, 0.4465],
-    std=[0.2023, 0.1994, 0.2010]
-)
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -77,7 +68,7 @@ parser.add_argument('--epochs', default=800, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=2048, type=int,
+parser.add_argument('-b', '--batch-size', default=1024, type=int,
                     metavar='N',
                     help='mini-batch size (default: 512), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -89,6 +80,10 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=0.0005, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
+parser.add_argument('--stn-wd', '--stn-weight-decay', default=0.0005, type=float,
+                    metavar='W', help='',
+                    dest='stn_weight_decay')
+
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--world-size', default=-1, type=int,
@@ -119,7 +114,7 @@ parser.add_argument("--invert_stn_gradients", default=True, type=utils.bool_flag
 parser.add_argument("--use_stn_optimizer", default=False, type=utils.bool_flag,
                     help="Set this flag to use a separate optimizer for the STN parameters; "
                             "annealed with cosine and no warmup")
-parser.add_argument('--stn_mode', default='affine', type=str,
+parser.add_argument('--stn_mode', default='translation_scale_symmetric', type=str,
                     help='Determines the STN mode (choose from: affine, translation, scale, rotation, '
                             'rotation_scale, translation_scale, rotation_translation, rotation_translation_scale')
 parser.add_argument("--stn_lr", default=5e-4, type=float, help="""Learning rate at the end of
@@ -143,9 +138,9 @@ parser.add_argument("--use_unbounded_stn", default=True, type=utils.bool_flag,
                     help="Set this flag to not use a tanh in the last STN layer (default: use bounded STN).")
 parser.add_argument("--stn_warmup_epochs", default=0, type=int,
                     help="Specifies the number of warmup epochs for the STN (default: 0).")
-parser.add_argument("--stn_conv1_depth", default=32, type=int,
+parser.add_argument("--stn_conv1_depth", default=16, type=int,
                     help="Specifies the number of feature maps of conv1 for the STN localization network (default: 32).")
-parser.add_argument("--stn_conv2_depth", default=32, type=int,
+parser.add_argument("--stn_conv2_depth", default=16, type=int,
                     help="Specifies the number of feature maps of conv2 for the STN localization network (default: 32).")
 parser.add_argument("--stn_theta_norm", default=True, type=utils.bool_flag,
                     help="Set this flag to normalize 'theta' in the STN before passing to affine_grid(theta, ...). Fixes the problem with cropping of the images (black regions)")
@@ -180,7 +175,7 @@ parser.add_argument("--penalty_target", default='mean', type=str, choices=['zero
                         help="Specify the type of target of the penalty. Here, the target is the area with respect to"
                              "the original image. `zero` and `one` are the values itself. `mean` and `rand` are"
                              "inferred with respect to given crop-scales.")
-parser.add_argument("--min_glb_overlap", default=0.7, type=float, help="The minimal overlap between the two global crops.")
+parser.add_argument("--min_glb_overlap", default=0.5, type=float, help="The minimal overlap between the two global crops.")
 parser.add_argument("--min_lcl_overlap", default=0.1, type=float, help="The minimal overlap between two local crops.")
 
 parser.add_argument("--stn_ema_update", default=False, type=utils.bool_flag, help="")
@@ -437,16 +432,17 @@ def main_worker(gpu, ngpus_per_node, args):
             optim_params += list(stn.parameters())
 
 
-    optimizer = torch.optim.SGD(optim_params, init_lr,
+    optimizer = torch.optim.SGD(optim_params, 
+                                init_lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
     if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
-        stn_optimizer = torch.optim.SGD(params=list(stn.parameters()), 
-                                        lr=init_stn_lr,
-                                        momentum=args.momentum,
-                                        weight_decay=args.weight_decay
-                                        )
+        stn_optimizer = torch.optim.AdamW(params=list(stn.parameters()),
+                                          lr=init_stn_lr,
+                                          weight_decay=args.stn_weight_decay,
+                                    )
+
 
     base_checkpoint_name = "checkpoint_frozen_stn" if args.use_pretrained_stn else "checkpoint_training_stn"
     checkpoint_to_resume = os.path.join(args.expt_dir, base_checkpoint_name + ".pth.tar")
@@ -506,6 +502,7 @@ def main_worker(gpu, ngpus_per_node, args):
         summary_writer = SummaryWriterCustom(args.expt_dir / "summary", plot_size=args.summary_plot_size)
 
     if not args.resize_all_inputs and args.dataset == 'ImageNet':
+        print("using ImageNet transforms (resize_all_inputs)")
         transform = transforms.Compose([
                 transforms.ToTensor(),
                 normalize_imagenet,
@@ -515,6 +512,7 @@ def main_worker(gpu, ngpus_per_node, args):
     elif args.resize_all_inputs and args.dataset == "ImageNet":
         # Data loading code
         traindir = os.path.join(args.dataset_path, 'train')
+        print("using ImageNet transforms")
 
         transform = transforms.Compose([
                 transforms.Resize(256),
@@ -534,15 +532,25 @@ def main_worker(gpu, ngpus_per_node, args):
             train_dataset = datasets.ImageFolder(traindir, simsiam.loader.TwoCropsTransform(transform))
     
     elif args.dataset == 'CIFAR10':
-        transform = transforms.Compose([
-                utils.NoneTransform() if args.use_stn else transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
-                transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                transforms.RandomGrayscale(p=0.2),  
-                utils.NoneTransform() if args.use_stn else transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize_cifar10,
-            ])
-            
+        
+        if args.use_stn:
+            print("using CIFAR10 STN transforms")
+            transform = transforms.Compose([
+                    transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                    transforms.ToTensor(),
+                ])
+        else:
+            print("using CIFAR10 default transforms")
+            transform = transforms.Compose([
+                    transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                    transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                    transforms.RandomGrayscale(p=0.2),  
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    normalize_cifar10,
+                ])
+
+
         collate_fn = None
         if args.use_stn:
             train_dataset = datasets.CIFAR10(root='datasets/CIFAR10', train=True, download=True, transform=transform)
@@ -577,13 +585,12 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
-        # train for one epoch
         try:
+            # train for one epoch
             train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, stn_penalty)
-        except ValueError as e:
-            print(e)
+        except Exception as e:
+            raise e
             
-
         is_last_epoch = epoch + 1 >= args.epochs
 
         save_dict = {
@@ -646,14 +653,13 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
 
         if args.use_stn:
             stn_images, thetas = stn(images)
+            if args.stn_ema_update:
+                with torch.no_grad():
+                    stn_images_target, thetas_target = target_stn(images)
+                    thetas[1] = thetas_target[1]
+                    stn_images[1] = stn_images_target[1]
         else:
             stn_images = images
-
-        if args.stn_ema_update and args.use_stn:
-            with torch.no_grad():
-                stn_images_target, thetas_target = target_stn(images)
-                thetas[1] = thetas_target[1]
-                stn_images[1] = stn_images_target[1]
 
         penalty = 0
         if args.use_stn:
@@ -664,33 +670,16 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
                 else:
                     penalty = stn_penalty(images=stn_images, target=images, thetas=thetas)
 
-        if not args.resize_all_inputs and args.dataset == 'ImageNet' and args.use_stn:
-            # in the case of varying image resolutions, we could not color-augment images in DataLoader -> do it here:
-            color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)
-            gaussian_blur = simsiam.loader.GaussianBlur([.1, 2.])
-            transform_view1 = transforms.Compose([
-              transforms.RandomApply([color_jitter], p=0.8),
-              transforms.RandomGrayscale(p=0.2),
-              transforms.RandomApply([gaussian_blur], p=0.5),
-              normalize_imagenet,
-              transforms.ConvertImageDtype(torch.float32),
-            ])
-
-            transform_view2 = transforms.Compose([
-              transforms.RandomApply([color_jitter], p=0.8),
-              transforms.RandomGrayscale(p=0.2),
-              transforms.RandomApply([gaussian_blur], p=0.5),
-              normalize_imagenet,
-              transforms.ConvertImageDtype(torch.float32),
-            ])        
-            
+        if args.use_stn:        
+            transform_view1, transform_view2 = get_stn_transforms(args)
             stn_images[0] = transform_view1(stn_images[0])
             stn_images[1] = transform_view2(stn_images[1])   
-            # TODO: do this for stn_images_target       
-        
+            # TODO: do this for stn_images_target and check validity for ImageNet    
         
         # compute output and loss
-        penalty_l = penalty * args.penalty_weight
+        penalty_l = 0
+        if args.use_stn:
+            penalty_l = torch.exp(penalty * args.penalty_weight)
         
         if args.four_way_loss:
             p1, p2, z1, z2 = model(x1=images, x2=stn_images[0])
@@ -715,7 +704,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
             total_l = simsiam_l + penalty_l
 
-        if math.isnan(total_l.item()):
+        if math.isnan(float(total_l.item())):
             raise ValueError('Loss is NaN')
 
         total_loss.update(total_l.item(), images[0].size(0))
