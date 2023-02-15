@@ -5,6 +5,21 @@ import seaborn as sns
 import argparse
 import torch
 import os
+import torchvision.transforms as transforms
+import simsiam.loader
+import simsiam.builder
+
+
+normalize_imagenet = transforms.Normalize(
+    mean=[0.485, 0.456, 0.406],
+    std=[0.229, 0.224, 0.225]
+)
+
+normalize_cifar10 = transforms.Normalize(
+    mean=[0.4914, 0.4822, 0.4465],
+    std=[0.2023, 0.1994, 0.2010]
+)
+
 
 class SummaryWriterCustom(SummaryWriter):
     def __init__(self, out_path, plot_size):
@@ -74,6 +89,49 @@ def grad_rescale(x, scale=1.0):
     GradientRescale.scale = scale
     return GradientRescale.apply(x)
 
+
+def get_stn_transforms(args):
+    # in the case of varying image resolutions, we could not color-augment images in DataLoader -> do it here:
+    color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)
+    gaussian_blur = simsiam.loader.GaussianBlur([.1, 2.])
+
+    if args.dataset == 'CIFAR10':
+        transform_view1 = transforms.Compose([
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomApply([color_jitter], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            normalize_cifar10,
+            transforms.ConvertImageDtype(torch.float32),
+        ])
+
+        transform_view2 = transforms.Compose([
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomApply([color_jitter], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            normalize_cifar10,
+            transforms.ConvertImageDtype(torch.float32),
+        ])
+
+    elif not args.resize_all_inputs and args.dataset == 'ImageNet':
+        transform_view1 = transforms.Compose([
+            transforms.RandomApply([color_jitter], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.RandomApply([gaussian_blur], p=0.5),
+            normalize_imagenet,
+            transforms.ConvertImageDtype(torch.float32),
+        ])
+
+        transform_view2 = transforms.Compose([
+            transforms.RandomApply([color_jitter], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.RandomApply([gaussian_blur], p=0.5),
+            normalize_imagenet,
+            transforms.ConvertImageDtype(torch.float32),
+        ])
+    else:
+        raise ValueError("could not get transform")
+
+    return transform_view1, transform_view2
 
 def image_grid(images, original_images, epoch, plot_size=16):
     """Return a 5x5 grid of the MNIST images as a matplotlib figure."""
