@@ -1,5 +1,5 @@
 #!/bin/zsh
-#SBATCH -p alldlc_gpu-rtx2080 #bosch_gpu-rtx2080 #alldlc_gpu-rtx2080
+#SBATCH -p bosch_gpu-rtx2080 #alldlc_gpu-rtx2080 #bosch_gpu-rtx2080 #alldlc_gpu-rtx2080
 #SBATCH --gres=gpu:4
 #SBATCH -J stn
 #SBATCH -t 8:00:00 #4-23:59:59 #23:59:59

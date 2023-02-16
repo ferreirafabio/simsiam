@@ -198,7 +198,7 @@ parser.add_argument('--fix-pred-lr', action='store_true',
                     "pre-process images solely.""")
 
 
-def main(kwargs=None, working_dir=None):
+def main(kwargs=None):
     args, unknown = parser.parse_known_args()
     # overload args with kwargs
     if kwargs is not None:
@@ -209,19 +209,13 @@ def main(kwargs=None, working_dir=None):
                 print(f"{k} not in args. Not setting it.")
 
     # Saving checkpoint and config pased on experiment mode
-    # expt_dir = "experiments"
-    # expt_sub_dir = os.path.join(expt_dir, args.expt_name)
+    expt_dir = "experiments"
+    expt_sub_dir = os.path.join(expt_dir, args.expt_name)
 
-    # args.expt_dir = pathlib.Path(expt_sub_dir)
+    args.expt_dir = pathlib.Path(expt_sub_dir)
 
-    # if not os.path.exists(expt_sub_dir):
-        # os.makedirs(expt_sub_dir)
-
-    expt_sub_dir = working_dir
-    args.expt_dir = working_dir
-
-    if not os.path.exists(args.expt_dir):
-        os.makedirs(args.expt_dir)
+    if not os.path.exists(expt_sub_dir):
+        os.makedirs(expt_sub_dir)
 
     assert args.local_crops_number == 0, "SimSiam only uses two views, so local_crops_number must be 0"
 
