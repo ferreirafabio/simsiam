@@ -268,7 +268,7 @@ def main(kwargs=None, working_dir=None):
             # Simply call main_worker function
             main_worker(args.gpu, ngpus_per_node, args)
     except Exception as e:
-        return float('inf')
+        raise e
 
 
 def main_worker(gpu, ngpus_per_node, args):

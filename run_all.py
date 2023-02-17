@@ -181,7 +181,7 @@ parser.add_argument('--fix-pred-lr', action='store_true',
 parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+', help="")
 
 # BOHB
-parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=10)
+parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
 parser.add_argument('--is_worker', help='Flag to turn this into a worker process', type=utils.bool_flag, default=True)
 parser.add_argument('--run_id', type=str, help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.')
 
@@ -189,21 +189,18 @@ parser.add_argument('--run_id', type=str, help='A unique run id for this optimiz
 class ExperimentWrapper():
     def get_bohb_parameters(self):
         params = {}
-        params['min_budget'] = 1
-        params['max_budget'] = 8
-        params['eta'] = 2
+        params['min_budget'] = 0.01
+        params['max_budget'] = 1
+        params['eta'] = 3
         params['iterations'] = 1000
-        params['random_fraction'] = 0.3
+        params['random_fraction'] = 0.333
 
         return params
 
     def get_configspace(self):
         cs = CS.ConfigurationSpace()
-        
-        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='lr', lower=1e-5, upper=0.1, log=True, default_value=0.01))
-        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='weight_decay', lower=1e-5, upper=0.005, log=True, default_value=0.0005))
-        
-        stn_wd = CSH.UniformFloatHyperparameter(name='stn_weight_decay', lower=1e-5, upper=0.005, log=True, default_value=0.0005)
+                
+        stn_wd = CSH.UniformFloatHyperparameter(name='stn_weight_decay', lower=1e-6, upper=0.005, log=True, default_value=0.0005)
         cs.add_hyperparameter(stn_wd)
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='invert_stn_gradients', choices=[True, False], default_value=True))
@@ -211,7 +208,7 @@ class ExperimentWrapper():
         stn_optimizer = CSH.CategoricalHyperparameter(name='use_stn_optimizer', choices=[True, False], default_value=False)
         cs.add_hyperparameter(stn_optimizer)
 
-        stn_lr = CSH.UniformFloatHyperparameter(name='stn_lr', lower=1e-5, upper=0.1, log=True, default_value=0.0001)
+        stn_lr = CSH.UniformFloatHyperparameter(name='stn_lr', lower=1e-6, upper=1., log=True, default_value=0.0001)
         cs.add_hyperparameter(stn_lr)
 
         cond = InCondition(stn_wd, stn_optimizer, [True])
@@ -221,17 +218,17 @@ class ExperimentWrapper():
         cs.add_condition(cond)
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='separate_localization_net', choices=[True, False], default_value=False))
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='use_unbounded_stn', choices=[True, False], default_value=False))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='use_unbounded_stn', choices=[True, False], default_value=True))
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv1_depth', choices=[8, 16, 32], default_value=16))
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv2_depth', choices=[8, 16, 32], default_value=16))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv1_depth', choices=[4, 8, 16, 32], default_value=8))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv2_depth', choices=[4, 8, 16, 32], default_value=8))
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_theta_norm', choices=[True, False], default_value=True))
 
-        penalty_loss = CSH.CategoricalHyperparameter(name='penalty_loss', choices=penalty_list+[""], default_value="")
+        penalty_loss = CSH.CategoricalHyperparameter(name='penalty_loss', choices=["OverlapPenalty", "ThetaLoss", "ThetaCropsPenalty"]+[""], default_value="")
         cs.add_hyperparameter(penalty_loss)
 
-        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='epsilon', lower=0.001, upper=5000, log=True, default_value=1.))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='epsilon', choices=[0.01, 0.1, 1.0, 5., 10., 50., 100., 200., 1000.], default_value=1.))
         
         invert_penalty = CSH.CategoricalHyperparameter(name='invert_penalty', choices=[True, False], default_value=True)
         cs.add_hyperparameter(invert_penalty)
@@ -239,18 +236,18 @@ class ExperimentWrapper():
         cond = NotEqualsCondition(invert_penalty, penalty_loss, "")
         cs.add_condition(cond)
 
-        cs.add_hyperparameter(CSH.UniformFloatHyperparameter(name='penalty_weight', lower=0.01, upper=100, log=True, default_value=1.))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='penalty_weight', choices=[0.01, 0.1, 1.0, 5., 10., 50., 100., 200., 1000.], default_value=1.))
 
         ema = CSH.CategoricalHyperparameter(name='stn_ema_update', choices=[True, False], default_value=False)
         cs.add_hyperparameter(ema)
 
-        ema_momentum = CSH.UniformFloatHyperparameter(name='stn_ema_momentum', lower=0.5, upper=0.999, log=True, default_value=0.998)
+        ema_momentum = CSH.CategoricalHyperparameter(name='stn_ema_momentum', choices=[0.5, 0.6, 0.7, 0.8, 0.9, 0.99, 0.998, 0.999], default_value=0.998)
         cs.add_hyperparameter(ema_momentum)
 
         cond = InCondition(ema_momentum, ema, [True])
         cs.add_condition(cond)
 
-        min_glb_overlap = CSH.UniformFloatHyperparameter(name='min_glb_overlap', lower=0.01, upper=0.9, log=True, default_value=0.5)
+        min_glb_overlap = CSH.CategoricalHyperparameter(name='min_glb_overlap', choices=[0.1, 0.2, 0.4, 0.5, 0.6, 0.8, 0.9], default_value=0.5)
         cs.add_hyperparameter(min_glb_overlap)
         
         cond = EqualsCondition(min_glb_overlap, penalty_loss, 'OverlapPenalty')
@@ -258,15 +255,13 @@ class ExperimentWrapper():
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='four_way_loss', choices=[True, False], default_value=False))
 
-        global_crops_scale = CSH.CategoricalHyperparameter(name='global_crops_scale', choices=[(0.4, 1.), (0.6, 1.), (0.8, 1.), (0.9, 1.), (0.1, 1.), (0.1, 0.8)], default_value=(0.4, 1.))
+        global_crops_scale = CSH.CategoricalHyperparameter(name='global_crops_scale', choices=[(0.4, 1.), (0.6, 1.), (0.8, 1.), (0.9, 1.), (0.1, 0.8)], default_value=(0.4, 1.))
         cs.add_hyperparameter(global_crops_scale)
 
         cond = EqualsCondition(global_crops_scale, penalty_loss, 'OverlapPenalty')
         cs.add_condition(cond)
 
-        # cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_mode', 
-        # choices=["affine", "translation_scale_symmetric", "rotation_translation_scale_symmetric", 
-        # "rotation_scale_symmetric"], default_value="translation_scale_symmetric"))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_mode', choices=["affine", "translation_scale_symmetric", "rotation_translation_scale_symmetric"], default_value="translation_scale_symmetric"))
 
         return cs
 
@@ -318,30 +313,35 @@ class ExperimentWrapper():
                 run_simiam(default_config, working_expt_dir)
             except Exception as e:
                 print(e)
-                info["exception"] = e
+                # info["exception"] = e
                 print("==> STN training failed.")
                 return {
                     "loss": float('inf'),
-                    "info": info
+                    "info": info,
                 }
             print("==> finished STN training.")
 
         # Linear evaluation
-        if 'eval' in default_config.pipeline_mode:
+        if 'eval' in default_config.pipeline_mode and os.path.isfile(default_config.pretrained):
             set_args(default_config, linear_eval_dct)
             print(f"==> starting linear eval with checkpoint {default_config.pretrained} (or checkpoint_linear_eval.pth.tar if exists).")
             try:
                 score = run_linear(default_config, working_expt_dir)
             except Exception as e:
                 print(e)
-                info["exception"] = e
+                # info["exception"] = e
                 print("==> linear eval failed.")
                 return {
                     "loss": float('inf'),
-                    "info": info
+                    "info": info,
                 }
             print("==> finished linear eval")
-
+        else:
+            print("==> skipping linear eval because pretrained checkpoint does not exist.")
+            return {
+                "loss": float('inf'),
+                "info": info,
+            }
 
         print('----------------------------')
         print('FINAL SCORE: ' + str(-score))

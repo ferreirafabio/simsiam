@@ -27,8 +27,6 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-
-from torch.utils.tensorboard import SummaryWriter
 import yaml
 
 from models import resnet_cifar
@@ -111,7 +109,7 @@ best_acc1 = 0
 
 
 def main(kwargs=None, working_dir=None):
-    args, unknown = parser.parse_known_args()
+    args, _ = parser.parse_known_args()
     if kwargs is not None:
         for k, v in vars(kwargs).items():
             if k in vars(args):
@@ -127,9 +125,10 @@ def main(kwargs=None, working_dir=None):
 
     # if not os.path.exists(expt_sub_dir):
         # os.makedirs(expt_sub_dir)
-    
+
     expt_sub_dir = working_dir
     args.expt_dir = working_dir
+
     if not os.path.exists(args.expt_dir):
         os.makedirs(args.expt_dir)
 
@@ -318,9 +317,6 @@ def main_worker(gpu, ngpus_per_node, args, res_save_path):
 
     cudnn.benchmark = True
 
-    if args.rank == 0:
-        writer = SummaryWriter(log_dir=os.path.join(args.expt_dir, f"tensorboard_linearcls_{args.epochs}_{init_lr}"))
-
     if args.dataset == 'ImageNet':
         # Data loading code
         traindir = os.path.join(args.dataset_path, 'train')
@@ -386,9 +382,6 @@ def main_worker(gpu, ngpus_per_node, args, res_save_path):
 
         # evaluate on validation set
         acc1 = validate(val_loader, model, criterion, args)
-        
-        #if args.rank == 0:
-        #    writer.add_scalar('acc1 (avg)', acc1, epoch)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
