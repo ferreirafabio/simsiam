@@ -661,7 +661,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         else:
             stn_images = images
 
-        penalty = 0
+        penalty = 0.
         if args.use_stn:
             if stn_penalty:
                 if args.penalty_loss == 'ThetaCropsPenalty':
@@ -679,7 +679,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         # compute output and loss
         penalty_l = 0
         if args.use_stn:
-            penalty_l = torch.exp(penalty * args.penalty_weight)
+            penalty_l = torch.exp(torch.tensor(penalty * args.penalty_weight))
         
         if args.four_way_loss:
             p1, p2, z1, z2 = model(x1=images, x2=stn_images[0])

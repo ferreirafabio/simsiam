@@ -313,7 +313,7 @@ class ExperimentWrapper():
                 run_simiam(default_config, working_expt_dir)
             except Exception as e:
                 print(e)
-                # info["exception"] = e
+                info["exception"] = str(e)
                 print("==> STN training failed.")
                 return {
                     "loss": float('inf'),
@@ -329,7 +329,7 @@ class ExperimentWrapper():
                 score = run_linear(default_config, working_expt_dir)
             except Exception as e:
                 print(e)
-                # info["exception"] = e
+                info["exception"] = str(e)
                 print("==> linear eval failed.")
                 return {
                     "loss": float('inf'),
