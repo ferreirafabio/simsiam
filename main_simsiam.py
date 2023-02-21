@@ -660,10 +660,11 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         else:
             stn_images = images
 
-        penalty = 0
+        penalty = None
         if args.use_stn:
             if stn_penalty:
                 if args.penalty_loss == 'ThetaCropsPenalty':
+                    penalty = torch.tensor(0.0).cuda(args.gpu)
                     for t in thetas:
                         penalty += stn_penalty(thetas=t, crops_scale=args.global_crops_scale)
                 else:
