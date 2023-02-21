@@ -17,7 +17,7 @@ from argparse import Namespace
 import pathlib
 
 import logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 
 
 model_names = sorted(name for name in models.__dict__
@@ -44,7 +44,7 @@ parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=1024, type=int,
+parser.add_argument('-b', '--batch-size', default=512, type=int,
                     metavar='N',
                     help='mini-batch size (default: 2048), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -56,7 +56,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=0.0005, type=float,
                     metavar='W', help='weight decay (default: 0.0005)',
                     dest='weight_decay')
-parser.add_argument('--stn-wd', '--stn-weight-decay', default=0.0005, type=float,
+parser.add_argument('--stn-wd', '--stn-weight-decay', default=1e-5, type=float,
                     metavar='W', help='',
                     dest='stn_weight_decay')
 
@@ -110,7 +110,7 @@ parser.add_argument("--deep_loc_net", default=False, type=utils.bool_flag,
                     help="(legacy) Set this flag to use a deep loc net. (default: False).")
 parser.add_argument("--stn_res", default=(32, 32), type=int, nargs='+',
                     help="Set the resolution of the global and local crops of the STN (default: 32x and 32x)")
-parser.add_argument("--use_unbounded_stn", default=False, type=utils.bool_flag,
+parser.add_argument("--use_unbounded_stn", default=True, type=utils.bool_flag,
                     help="Set this flag to not use a tanh in the last STN layer (default: use bounded STN).")
 parser.add_argument("--stn_warmup_epochs", default=0, type=int,
                     help="Specifies the number of warmup epochs for the STN (default: 0).")
@@ -200,10 +200,10 @@ class ExperimentWrapper():
     def get_configspace(self):
         cs = CS.ConfigurationSpace()
                 
-        stn_wd = CSH.UniformFloatHyperparameter(name='stn_weight_decay', lower=1e-6, upper=0.005, log=True, default_value=0.0005)
-        cs.add_hyperparameter(stn_wd)
+        # stn_wd = CSH.UniformFloatHyperparameter(name='stn_weight_decay', lower=1e-6, upper=0.005, log=True, default_value=0.0005)
+        # cs.add_hyperparameter(stn_wd)
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='invert_stn_gradients', choices=[True, False], default_value=True))
+        # cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='invert_stn_gradients', choices=[True, False], default_value=True))
         
         stn_optimizer = CSH.CategoricalHyperparameter(name='use_stn_optimizer', choices=[True, False], default_value=False)
         cs.add_hyperparameter(stn_optimizer)
@@ -211,32 +211,37 @@ class ExperimentWrapper():
         stn_lr = CSH.UniformFloatHyperparameter(name='stn_lr', lower=1e-6, upper=1., log=True, default_value=0.0001)
         cs.add_hyperparameter(stn_lr)
 
-        cond = InCondition(stn_wd, stn_optimizer, [True])
-        cs.add_condition(cond)
+        # cond = InCondition(stn_wd, stn_optimizer, [True])
+        # cs.add_condition(cond)
 
         cond = InCondition(stn_lr, stn_optimizer, [True])
         cs.add_condition(cond)
 
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_warmup_epochs', choices=[0, 1, 2, 4, 6, 8, 10, 20], default_value=0))
+
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='separate_localization_net', choices=[True, False], default_value=False))
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='use_unbounded_stn', choices=[True, False], default_value=True))
+        # cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='use_unbounded_stn', choices=[True, False], default_value=True))
 
         cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv1_depth', choices=[4, 8, 16, 32], default_value=8))
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv2_depth', choices=[4, 8, 16, 32], default_value=8))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_conv2_depth', choices=[4, 8, 16], default_value=8))
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_theta_norm', choices=[True, False], default_value=True))
+        # cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_theta_norm', choices=[True, False], default_value=True))
 
         penalty_loss = CSH.CategoricalHyperparameter(name='penalty_loss', choices=["OverlapPenalty", "ThetaLoss", "ThetaCropsPenalty"]+[""], default_value="")
         cs.add_hyperparameter(penalty_loss)
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='epsilon', choices=[0.01, 0.1, 1.0, 5., 10., 50., 100., 200., 1000.], default_value=1.))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='epsilon', choices=[0.01, 0.1, 1.0, 2., 3.], default_value=1.))
         
-        invert_penalty = CSH.CategoricalHyperparameter(name='invert_penalty', choices=[True, False], default_value=True)
-        cs.add_hyperparameter(invert_penalty)
+        # invert_penalty = CSH.CategoricalHyperparameter(name='invert_penalty', choices=[True, False], default_value=True)
+        # cs.add_hyperparameter(invert_penalty)
 
-        cond = NotEqualsCondition(invert_penalty, penalty_loss, "")
+        penalty_target = CSH.CategoricalHyperparameter(name='penalty_target', choices=['zero', 'one', 'mean', 'rand'], default_value="mean")
+        cs.add_hyperparameter(penalty_target)
+
+        cond = NotEqualsCondition(penalty_target, penalty_loss, "")
         cs.add_condition(cond)
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='penalty_weight', choices=[0.01, 0.1, 1.0, 5., 10., 50., 100., 200., 1000.], default_value=1.))
+        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='penalty_weight', choices=[0.01, 0.1, 1.0, 2., 3.], default_value=1.))
 
         ema = CSH.CategoricalHyperparameter(name='stn_ema_update', choices=[True, False], default_value=False)
         cs.add_hyperparameter(ema)
@@ -253,7 +258,7 @@ class ExperimentWrapper():
         cond = EqualsCondition(min_glb_overlap, penalty_loss, 'OverlapPenalty')
         cs.add_condition(cond)
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='four_way_loss', choices=[True, False], default_value=False))
+        # cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='four_way_loss', choices=[True, False], default_value=False))
 
         global_crops_scale = CSH.CategoricalHyperparameter(name='global_crops_scale', choices=[(0.4, 1.), (0.6, 1.), (0.8, 1.), (0.9, 1.), (0.1, 0.8)], default_value=(0.4, 1.))
         cs.add_hyperparameter(global_crops_scale)
@@ -261,7 +266,7 @@ class ExperimentWrapper():
         cond = EqualsCondition(global_crops_scale, penalty_loss, 'OverlapPenalty')
         cs.add_condition(cond)
 
-        cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_mode', choices=["affine", "translation_scale_symmetric", "rotation_translation_scale_symmetric"], default_value="translation_scale_symmetric"))
+        # cs.add_hyperparameter(CSH.CategoricalHyperparameter(name='stn_mode', choices=["affine", "translation_scale_symmetric", "rotation_translation_scale_symmetric"], default_value="translation_scale_symmetric"))
 
         return cs
 
@@ -322,8 +327,15 @@ class ExperimentWrapper():
             print("==> finished STN training.")
 
         # Linear evaluation
-        if 'eval' in default_config.pipeline_mode and os.path.isfile(default_config.pretrained):
+        if 'eval' in default_config.pipeline_mode:
             set_args(default_config, linear_eval_dct)
+
+            if not os.path.isfile(default_config.pretrained):
+                print("==> skipping linear eval because pretrained checkpoint does not exist.")
+                return {
+                    "loss": float('inf'),
+                    "info": info,
+                }
             print(f"==> starting linear eval with checkpoint {default_config.pretrained} (or checkpoint_linear_eval.pth.tar if exists).")
             try:
                 score = run_linear(default_config, working_expt_dir)
@@ -336,12 +348,7 @@ class ExperimentWrapper():
                     "info": info,
                 }
             print("==> finished linear eval")
-        else:
-            print("==> skipping linear eval because pretrained checkpoint does not exist.")
-            return {
-                "loss": float('inf'),
-                "info": info,
-            }
+        
 
         print('----------------------------')
         print('FINAL SCORE: ' + str(-score))

@@ -64,7 +64,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                         ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=800, type=int, metavar='N',
+parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -80,7 +80,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=0.0005, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
-parser.add_argument('--stn-wd', '--stn-weight-decay', default=0.0005, type=float,
+parser.add_argument('--stn-wd', '--stn-weight-decay', default=1e-5, type=float,
                     metavar='W', help='',
                     dest='stn_weight_decay')
 
@@ -215,7 +215,7 @@ def main(kwargs=None, working_dir=None):
     # args.expt_dir = pathlib.Path(expt_sub_dir)
 
     # if not os.path.exists(expt_sub_dir):
-        # os.makedirs(expt_sub_dir)
+    #     os.makedirs(expt_sub_dir)
 
     expt_sub_dir = working_dir
     args.expt_dir = working_dir
@@ -585,6 +585,14 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
+        if args.stn_warmup_epochs > 0:
+            if epoch < args.stn_warmup_epochs:
+                for p in stn.parameters():
+                    p.requires_grad = False
+            else:
+                for p in stn.parameters():
+                    p.requires_grad = True
+
         try:
             # train for one epoch
             train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, stn_penalty)
@@ -661,15 +669,16 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         else:
             stn_images = images
 
-        penalty = 0.
+        penalty = None
         if args.use_stn:
             if stn_penalty:
                 if args.penalty_loss == 'ThetaCropsPenalty':
+                    penalty = torch.tensor(0.0).cuda(args.gpu)
                     for t in thetas:
                         penalty += stn_penalty(thetas=t, crops_scale=args.global_crops_scale)
+                    penalty = penalty.mean()
                 else:
                     penalty = stn_penalty(images=stn_images, target=images, thetas=thetas)
-
         if args.use_stn:        
             transform_view1, transform_view2 = get_stn_transforms(args)
             stn_images[0] = transform_view1(stn_images[0])
@@ -678,8 +687,8 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         
         # compute output and loss
         penalty_l = 0
-        if args.use_stn:
-            penalty_l = torch.exp(torch.tensor(penalty * args.penalty_weight))
+        if args.use_stn and penalty:
+            penalty_l = torch.exp(penalty * args.penalty_weight)
         
         if args.four_way_loss:
             p1, p2, z1, z2 = model(x1=images, x2=stn_images[0])
@@ -710,7 +719,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))
         
-        if stn_penalty and args.use_stn:
+        if stn_penalty and args.use_stn and penalty:
             penalty_loss_meter.update(penalty_l.item(), images[0].size(0))
 
         # compute gradient and do SGD step
@@ -727,7 +736,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             stn_optimizer.step()
 
-        if args.stn_ema_update and args.use_stn:
+        if args.stn_ema_update and args.use_stn and epoch >= args.stn_warmup_epochs:
             utils.update_moving_average(stn_ema_updater, ma_model=target_stn, current_model=stn)
 
         # measure elapsed time
