@@ -250,19 +250,16 @@ def main(kwargs=None):
 
     ngpus_per_node = torch.cuda.device_count()
     print("ngpus per node", ngpus_per_node)
-    try:
-        if args.multiprocessing_distributed:
-            # Since we have ngpus_per_node processes per node, the total world_size
-            # needs to be adjusted accordingly
-            args.world_size = ngpus_per_node * args.world_size
-            # Use torch.multiprocessing.spawn to launch distributed processes: the
-            # main_worker process function
-            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-        else:
-            # Simply call main_worker function
-            main_worker(args.gpu, ngpus_per_node, args)
-    except Exception as e:
-        return float('inf')
+    if args.multiprocessing_distributed:
+        # Since we have ngpus_per_node processes per node, the total world_size
+        # needs to be adjusted accordingly
+        args.world_size = ngpus_per_node * args.world_size
+        # Use torch.multiprocessing.spawn to launch distributed processes: the
+        # main_worker process function
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+    else:
+        # Simply call main_worker function
+        main_worker(args.gpu, ngpus_per_node, args)
 
 
 def main_worker(gpu, ngpus_per_node, args):
@@ -579,6 +576,14 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             adjust_learning_rate(stn_optimizer, init_stn_lr, epoch, args)
 
+        if args.stn_warmup_epochs > 0:
+            if epoch < args.stn_warmup_epochs:
+                for p in stn.parameters():
+                    p.requires_grad = False
+            else:
+                for p in stn.parameters():
+                    p.requires_grad = True
+
         try:
             # train for one epoch
             train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_stn, stn_ema_updater, epoch, args, summary_writer, stn_penalty)
@@ -673,7 +678,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         # compute output and loss
         penalty_l = 0
         if args.use_stn:
-            penalty_l = torch.exp(penalty * args.penalty_weight)
+            penalty_l = torch.exp(torch.tensor(penalty * args.penalty_weight))
         
         if args.four_way_loss:
             p1, p2, z1, z2 = model(x1=images, x2=stn_images[0])
