@@ -128,13 +128,17 @@ class LocNet(nn.Module):
 
     def __init__(self, mode: str = 'affine', invert_gradient: bool = False,
                  num_heads: int = 4, separate_backbones: bool = False,
-                 conv1_depth: int = 32, conv2_depth: int = 32, avgpool: int = 8):
+                 conv1_depth: int = 32, conv2_depth: int = 32, avgpool: int = 8, adco: bool = False):
         super().__init__()
         self.mode = mode
         self.invert_gradient = invert_gradient
         self.separate_backbones = separate_backbones
         self.num_heads = num_heads
         self.feature_dim = conv2_depth * avgpool ** 2
+        self.adco = adco
+
+        if self.adco:
+            assert self.separate_backbones == True, "if adco is set, separate_localization_net must also be set to True."
 
         num_backbones = num_heads if self.separate_backbones else 1
 
@@ -152,7 +156,11 @@ class LocNet(nn.Module):
             xs = self.backbones[0](x)
             outputs = [head(xs) for head in self.heads]
         if self.invert_gradient:
-            outputs = [grad_reverse(theta) for theta in outputs]
+            if self.adco:
+                # hardcoded for now: only reverse grads for one locnet+head, other is not inverted
+                outputs[0] = grad_reverse(outputs[0])
+            else:
+                outputs = [grad_reverse(theta) for theta in outputs]
         return outputs
 
 
@@ -167,7 +175,8 @@ class STN(nn.Module):
                  unbounded_stn: bool = False,
                  theta_norm: bool = False,
                  resolution: tuple = (224, 96),
-                 global_crops_scale: tuple = (0.4, 1), local_crops_scale: tuple = (0.05, 0.4),):
+                 global_crops_scale: tuple = (0.4, 1), local_crops_scale: tuple = (0.05, 0.4),
+                 adco: bool =False,):
         super().__init__()
         self.mode = mode
         self.stn_n_params = N_PARAMS[mode]
@@ -181,14 +190,21 @@ class STN(nn.Module):
         self.local_crops_number = local_crops_number
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
+        self.adco = adco
 
         assert len(resolution) in (1, 2), f"resolution parameter should be of length 1 or 2, but {len(resolution)} with {resolution} is given."
         self.global_res, self.local_res = resolution[0] + resolution[0] if len(resolution) == 1 else resolution
 
         self.total_crops_number = 2 + self.local_crops_number
         # Spatial transformer localization-network
-        self.localization_net = LocNet(self.mode, self.invert_gradients, self.total_crops_number,
-                                       self.separate_localization_net, self.conv1_depth, self.conv2_depth, self.avgpool)
+        self.localization_net = LocNet(self.mode, 
+                                       self.invert_gradients, 
+                                       self.total_crops_number,
+                                       self.separate_localization_net, 
+                                       self.conv1_depth, 
+                                       self.conv2_depth, 
+                                       self.avgpool,
+                                       self.adco,)
 
         self.gmin_scale = math.pow(self.global_crops_scale[0], .25)
         self.gmax_scale = math.pow(self.global_crops_scale[1], .25)

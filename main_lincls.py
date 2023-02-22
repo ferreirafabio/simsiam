@@ -15,6 +15,7 @@ import shutil
 import time
 import warnings
 
+import utils
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -99,6 +100,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 parser.add_argument('--dataset', default='CIFAR10', type=str, help='dataset name. Should be one of ImageNet or CIFAR10.')
 parser.add_argument('--expt-name', default='default_experiment', type=str, help='Name of the experiment')
 parser.add_argument('--save-freq', default=10, type=int, metavar='N', help='checkpoint save frequency (default: 10)')
+parser.add_argument("--finetune", default=False, type=utils.bool_flag,
+                    help="Finetune whole network instead of linear eval protocol.")
 
 
 # additional configs:
@@ -132,7 +135,12 @@ def main(kwargs=None):
     print(args_dict)
     timestr = time.strftime("%Y%m%d-%H%M%S")
 
-    with open(os.path.join(expt_sub_dir, f"args_dict_linearcls_{timestr}.yaml"), "w") as f:
+    if args.finetune:
+        args_dict_name = f"args_dict_finetuning_{timestr}.yaml"
+    else:
+        args_dict_name = f"args_dict_linearcls_{timestr}.yaml"
+
+    with open(os.path.join(expt_sub_dir, args_dict_name), "w") as f:
         yaml.dump(args_dict, f)
 
     if args.seed is not None:
@@ -198,10 +206,15 @@ def main_worker(gpu, ngpus_per_node, args):
         print(f"=> creating model {args.arch}")
         model = models.__dict__[args.arch]()
 
-    # freeze all layers but the last fc
-    for name, param in model.named_parameters():
-        if name not in ['fc.weight', 'fc.bias']:
-            param.requires_grad = False
+    if args.finetune:
+        for name, param in model.named_parameters():
+            param.requires_grad = True
+    else:
+        # freeze all layers but the last fc
+        for name, param in model.named_parameters():
+            if name not in ['fc.weight', 'fc.bias']:
+                param.requires_grad = False
+
     # init the fc layer
     model.fc.weight.data.normal_(mean=0.0, std=0.01)
     model.fc.bias.data.zero_()
@@ -266,9 +279,12 @@ def main_worker(gpu, ngpus_per_node, args):
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
+    
     # optimize only the linear classifier
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
-    assert len(parameters) == 2  # fc.weight, fc.bias
+    
+    if args.finetune is False:
+        assert len(parameters) == 2  # fc.weight, fc.bias
 
     optimizer = torch.optim.SGD(parameters, init_lr,
                                 momentum=args.momentum,
@@ -303,7 +319,12 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     if args.rank == 0:
-        writer = SummaryWriter(log_dir=os.path.join(args.expt_dir, f"tensorboard_linearcls_{args.epochs}_{init_lr}"))
+        if args.finetune:
+            writer_name = f"tensorboard_finetuning_{args.epochs}_{init_lr}"
+        else:
+            writer_name = f"tensorboard_linearcls_{args.epochs}_{init_lr}"
+
+        writer = SummaryWriter(log_dir=os.path.join(args.expt_dir, writer_name))
 
     if args.dataset == 'ImageNet':
         # Data loading code
@@ -371,7 +392,11 @@ def main_worker(gpu, ngpus_per_node, args):
         # evaluate on validation set
         acc1 = validate(val_loader, model, criterion, args)
         if args.rank == 0:
-            writer.add_scalar('acc1 (avg)', acc1, epoch)
+            if args.finetune:
+                scalar_name = "acc1 (avg) finetuning"
+            else:
+                scalar_name = "acc1 (avg)"
+            writer.add_scalar(scalar_name, acc1, epoch)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -385,11 +410,15 @@ def main_worker(gpu, ngpus_per_node, args):
                 'optimizer' : optimizer.state_dict(),
                 }
         
-        if epoch == args.start_epoch:   
+        if epoch == args.start_epoch and args.finetune is False:   
             sanity_check(model.state_dict(), args.pretrained)
 
         if args.rank == 0:
-            save_checkpoint(save_dict, is_best=False, filename=os.path.join(args.expt_dir, "checkpoint_linear_eval.pth.tar"))
+            if args.finetune:
+                checkpoint_name = "checkpoint_finetuning.pth.tar"
+            else:
+                checkpoint_name = "checkpoint_linear_eval.pth.tar"
+            save_checkpoint(save_dict, is_best=False, filename=os.path.join(args.expt_dir, checkpoint_name))
 
         #if not args.multiprocessing_distributed or (args.multiprocessing_distributed
         #        and args.rank % ngpus_per_node == 0) and epoch % args.save_freq==0:
@@ -416,7 +445,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     BatchNorm in train mode may revise running mean/std (even if it receives
     no gradient), which are part of the model parameters too.
     """
-    model.eval()
+    if args.finetune is False:
+        model.eval()
 
     end = time.time()
     for i, (images, target) in enumerate(train_loader):

@@ -101,9 +101,9 @@ parser.add_argument("--use_unbounded_stn", default=False, type=utils.bool_flag,
                     help="Set this flag to not use a tanh in the last STN layer (default: use bounded STN).")
 parser.add_argument("--stn_warmup_epochs", default=0, type=int,
                     help="Specifies the number of warmup epochs for the STN (default: 0).")
-parser.add_argument("--stn_conv1_depth", default=32, type=int,
+parser.add_argument("--stn_conv1_depth", default=16, type=int,
                     help="Specifies the number of feature maps of conv1 for the STN localization network (default: 32).")
-parser.add_argument("--stn_conv2_depth", default=32, type=int,
+parser.add_argument("--stn_conv2_depth", default=16, type=int,
                     help="Specifies the number of feature maps of conv2 for the STN localization network (default: 32).")
 parser.add_argument("--stn_theta_norm", default=True, type=utils.bool_flag,
                     help="Set this flag to normalize 'theta' in the STN before passing to affine_grid(theta, ...). Fixes the problem with cropping of the images (black regions)")
@@ -151,8 +151,10 @@ parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag,
                     help='')
 
 parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
+parser.add_argument('--four_way_loss2', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--theta_prediction_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--use_stn', default=True, type=utils.bool_flag, help='for testing reasons')
+parser.add_argument('--adco', default=False, type=utils.bool_flag, help='Train one localization net and head adversarilly and the other cooperativelly.')
 
 
 # simsiam specific configs:
@@ -167,6 +169,8 @@ parser.add_argument('--fix-pred-lr', action='store_true',
 
 parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+',
                     help="")
+parser.add_argument("--finetune", default=False, type=utils.bool_flag,
+                    help="Finetune whole network instead of linear eval protocol.")
 
 def set_args(outer_args, dct):
     for k, v in dct.items():
@@ -179,7 +183,9 @@ def set_args(outer_args, dct):
 if __name__ == '__main__':
         outer_args = parser.parse_args()
 
-        
+        if outer_args.adco:
+            assert outer_args.separate_localization_net == True, "if adco is set, separate_localization_net must be set to True."
+            
         assert all([mode in ['pretrain', 'frozen', 'eval'] for mode in outer_args.pipeline_mode]), "pipeline_mode must be one of ['pretrain', 'frozen', 'eval']"
 
         print(f"running pipeline mode: {outer_args.pipeline_mode}")
