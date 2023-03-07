@@ -682,7 +682,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         
         # compute output and loss
         penalty_l = 0
-        if args.use_stn:
+        if args.use_stn and penalty is not None:
             penalty_l = torch.exp(penalty * args.penalty_weight)
         
         if args.four_way_loss:
@@ -772,9 +772,6 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             
             if stn_penalty and not args.use_pretrained_stn and args.use_stn:
                 summary_writer.write_scalar(tag="Penalty Loss", scalar_value=penalty.item(), epoch=epoch+1)
-
-            if args.theta_prediction_loss and args.use_stn:
-                summary_writer.write_scalar(tag="Theta Prediction Loss", scalar_value=penalty.item(), epoch=epoch+1)
 
             if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
                 summary_writer.write_scalar(tag="lr stn", scalar_value=stn_optimizer.param_groups[0]["lr"], epoch=epoch+1)
