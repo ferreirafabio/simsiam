@@ -626,7 +626,11 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
 
     if stn_penalty:
        penalty_loss_meter = AverageMeter('Penalty Loss', ':.6f')
-       meters.append(penalty_loss_meter)    
+       meters.append(penalty_loss_meter)
+
+    if args.theta_prediction_loss:
+        theta_loss_meter = AverageMeter('Theta Prediction Loss', ':.6f')
+        meters.append(theta_loss_meter)
 
     meters.append(total_loss)
     
@@ -691,12 +695,35 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             total_l = simsiam_l + penalty_l
 
         elif args.theta_prediction_loss:
+            # simsiam_l1 = torch.tensor(0.0).cuda(args.gpu)
+            # simsiam_l2 = torch.tensor(0.0).cuda(args.gpu)
+            # theta_pred = model(x1=stn_images[0], x2=stn_images[1])
+
             theta1_pred = model(x1=images, x2=stn_images[0])
             theta2_pred = model(x1=images, x2=stn_images[1])
+            
+            # print(f"theta1_pred shape: {theta1_pred.shape}    t_targ shape: {thetas[0].shape}")
+            # print(f"theta2_pred shape: {theta2_pred.shape}    t_targ shape: {thetas[1].shape}")
+
             simsiam_l1 = nn.functional.mse_loss(theta1_pred, thetas[0].flatten(start_dim=1))
             simsiam_l2 = nn.functional.mse_loss(theta2_pred, thetas[1].flatten(start_dim=1))
+
+            # for t_pred, t_targ in zip(theta_pred, thetas):
+            #     print(f"t_pred shape: {t_pred.shape}    t_targ shape: {t_targ.shape}")
+            # simsiam_l += torch.log(nn.functional.mse_loss(t_pred, t_targ.flatten(start_dim=1)))
+            # simsiam_l = simsiam_l.mean()
             simsiam_l = simsiam_l1 + simsiam_l2
+
             total_l = simsiam_l + penalty_l
+            
+            theta_loss_meter.update(simsiam_l.item(), images[0].size(0))
+
+            # theta1_pred = model(x1=images, x2=stn_images[0])
+            # theta2_pred = model(x1=images, x2=stn_images[1])
+            # simsiam_l1 = nn.functional.mse_loss(theta1_pred, thetas[0].flatten(start_dim=1))
+            # simsiam_l2 = nn.functional.mse_loss(theta2_pred, thetas[1].flatten(start_dim=1))
+            # simsiam_l = simsiam_l1 + simsiam_l2
+            # total_l = simsiam_l + penalty_l
         
         else:
             p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
@@ -745,6 +772,9 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             
             if stn_penalty and not args.use_pretrained_stn and args.use_stn:
                 summary_writer.write_scalar(tag="Penalty Loss", scalar_value=penalty.item(), epoch=epoch+1)
+
+            if args.theta_prediction_loss and args.use_stn:
+                summary_writer.write_scalar(tag="Theta Prediction Loss", scalar_value=penalty.item(), epoch=epoch+1)
 
             if args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
                 summary_writer.write_scalar(tag="lr stn", scalar_value=stn_optimizer.param_groups[0]["lr"], epoch=epoch+1)

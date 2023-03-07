@@ -44,9 +44,10 @@ class SimSiam(nn.Module):
         
         self.theta_predictor = None
         if self.theta_layer_dim:
-            self.theta_predictor = nn.Sequential(nn.Linear(dim+dim, 128),
+            self.theta_predictor = nn.Sequential(nn.Linear(dim+dim, 64),
+                                                 nn.BatchNorm1d(64),
                                                  nn.ReLU(inplace=True),
-                                                 nn.Linear(128, self.theta_layer_dim))
+                                                 nn.Linear(64, self.theta_layer_dim))
 
     def forward(self, x1, x2):
         """
@@ -66,7 +67,7 @@ class SimSiam(nn.Module):
         p2 = self.predictor(z2) # NxC
 
         if self.theta_predictor:
-            theta_pred = self.theta_predictor(torch.cat([p1, p2], dim=1))
-            return theta_pred
+            thetas = self.theta_predictor(torch.cat([p1, p2], dim=1))
+            return thetas
 
         return p1, p2, z1.detach(), z2.detach()
