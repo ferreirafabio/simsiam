@@ -185,6 +185,7 @@ parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag,
 
 parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--theta_prediction_loss', default=False, type=utils.bool_flag, help='')
+parser.add_argument('--view_reconstruction_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--use_stn', default=True, type=utils.bool_flag, help='for testing reasons')
 
 # simsiam specific configs:
@@ -287,7 +288,7 @@ def main_worker(gpu, ngpus_per_node, args):
     
     # create model
     if args.dataset == 'CIFAR10': 
-        if args.theta_prediction_loss:
+        if args.theta_prediction_loss or args.view_reconstruction_loss:
             theta_layer_dim = 6
         else:
             theta_layer_dim = None
@@ -415,6 +416,10 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.theta_prediction_loss:
             optim_params += [{'params': model.module.theta_predictor.parameters(), 'fix_lr': False}]
 
+        if args.view_reconstruction_loss:
+            optim_params += [{'params': model.module.view_reconstructor.parameters(), 'fix_lr': False}]
+    
+
         if not args.use_stn_optimizer and not args.use_pretrained_stn and args.use_stn:
             optim_params += [{'params': stn.parameters(), 'fix_lr': False}]
     else:
@@ -524,22 +529,22 @@ def main_worker(gpu, ngpus_per_node, args):
     
     elif args.dataset == 'CIFAR10':
         
-        if args.use_stn:
-            print("using CIFAR10 STN transforms")
-            transform = transforms.Compose([
-                    transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
-                    transforms.ToTensor(),
-                ])
-        else:
-            print("using CIFAR10 default transforms")
-            transform = transforms.Compose([
-                    transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
-                    transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                    transforms.RandomGrayscale(p=0.2),  
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalize_cifar10,
-                ])
+        # if args.use_stn:
+        #     print("using CIFAR10 STN transforms")
+        #     transform = transforms.Compose([
+        #             transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+        #             transforms.ToTensor(),
+        #         ])
+        # else:
+        print("using CIFAR10 default transforms")
+        transform = transforms.Compose([
+                transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                transforms.RandomGrayscale(p=0.2),  
+                # transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize_cifar10,
+            ])
 
 
         collate_fn = None
@@ -631,6 +636,10 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
     if args.theta_prediction_loss:
         theta_loss_meter = AverageMeter('Theta Prediction Loss', ':.6f')
         meters.append(theta_loss_meter)
+    
+    if args.view_reconstruction_loss:
+        view_recon_meter = AverageMeter('View Reconstruction Loss', ':.6f')
+        meters.append(view_recon_meter)
 
     meters.append(total_loss)
     
@@ -656,6 +665,8 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
 
         if args.use_stn:
             stn_images, thetas = stn(images)
+            # print(stn_images)
+            # print(thetas)
             if args.stn_ema_update:
                 with torch.no_grad():
                     stn_images_target, thetas_target = target_stn(images)
@@ -676,8 +687,9 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
 
         if args.use_stn:        
             transform_view1, transform_view2 = get_stn_transforms(args)
-            stn_images[0] = transform_view1(stn_images[0])
-            stn_images[1] = transform_view2(stn_images[1])   
+            # stn_images[0] = transform_view1(stn_images[0])
+            # stn_images[1] = transform_view2(stn_images[1])
+            
             # TODO: do this for stn_images_target and check validity for ImageNet    
         
         # compute output and loss
@@ -707,24 +719,20 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
 
             simsiam_l1 = nn.functional.mse_loss(theta1_pred, thetas[0].flatten(start_dim=1))
             simsiam_l2 = nn.functional.mse_loss(theta2_pred, thetas[1].flatten(start_dim=1))
-
-            # for t_pred, t_targ in zip(theta_pred, thetas):
-            #     print(f"t_pred shape: {t_pred.shape}    t_targ shape: {t_targ.shape}")
-            # simsiam_l += torch.log(nn.functional.mse_loss(t_pred, t_targ.flatten(start_dim=1)))
-            # simsiam_l = simsiam_l.mean()
             simsiam_l = simsiam_l1 + simsiam_l2
 
             total_l = simsiam_l + penalty_l
             
             theta_loss_meter.update(simsiam_l.item(), images[0].size(0))
-
-            # theta1_pred = model(x1=images, x2=stn_images[0])
-            # theta2_pred = model(x1=images, x2=stn_images[1])
-            # simsiam_l1 = nn.functional.mse_loss(theta1_pred, thetas[0].flatten(start_dim=1))
-            # simsiam_l2 = nn.functional.mse_loss(theta2_pred, thetas[1].flatten(start_dim=1))
-            # simsiam_l = simsiam_l1 + simsiam_l2
-            # total_l = simsiam_l + penalty_l
         
+        elif args.view_reconstruction_loss:
+
+            view_recon = model(x=images, theta=thetas[0].flatten(start_dim=1))
+            simsiam_l = nn.functional.mse_loss(view_recon, stn_images[0])
+
+            total_l = simsiam_l + penalty_l
+
+            view_recon_meter.update(simsiam_l.item(), images[0].size(0))
         else:
             p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
             
@@ -784,10 +792,9 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
 
             # Log stuff to tensorboard
             if epoch % args.summary_writer_freq == 0 and i == 0 and args.use_stn:
-                tag_images = "images (frozen STN)" if args.use_pretrained_stn else "images (training STN)"
+                tag_images = "reconstructed images (frozen STN)" if args.use_pretrained_stn else "reconstructed images (training STN)"
                 tag_thetas = "theta (frozen STN)" if args.use_pretrained_stn else "theta (training STN)"
-                summary_writer.write_stn_info(stn_images, images, thetas, epoch+1, tag_images=tag_images, tag_thetas=tag_thetas)
-
+                summary_writer.write_stn_info([stn_images[0], view_recon], images, thetas, epoch+1, tag_images=tag_images, tag_thetas=tag_thetas)
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)

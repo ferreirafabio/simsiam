@@ -195,7 +195,7 @@ class STN(nn.Module):
         assert len(resolution) in (1, 2), f"resolution parameter should be of length 1 or 2, but {len(resolution)} with {resolution} is given."
         self.global_res, self.local_res = resolution[0] + resolution[0] if len(resolution) == 1 else resolution
 
-        self.total_crops_number = 2 + self.local_crops_number
+        self.total_crops_number = 1 + self.local_crops_number
         # Spatial transformer localization-network
         self.localization_net = LocNet(self.mode, 
                                        self.invert_gradients, 
@@ -449,7 +449,7 @@ class AugmentationNetwork(nn.Module):
             img = img.unsqueeze(0)
             x[idx] = img
 
-        num_crops = self.transform_net.local_crops_number + 2
+        num_crops = self.transform_net.local_crops_number + 1
         views = [[] for _ in range(num_crops)]
         thetas = [[] for _ in range(num_crops)]
         for img in x:
@@ -484,7 +484,7 @@ class AugmentationNetwork(nn.Module):
             )[1], 0)
             start_idx = 0
             # Init for output lists
-            num_crops = self.transform_net.local_crops_number + 2
+            num_crops = self.transform_net.local_crops_number + 1
             views = [[] for _ in range(num_crops)]
             thetas = [[] for _ in range(num_crops)]
             idx_merged = [torch.zeros(1, dtype=idx_crops.dtype).cuda() for _ in range(dist.get_world_size())]

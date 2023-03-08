@@ -42,14 +42,43 @@ class SimSiam(nn.Module):
                                         nn.ReLU(inplace=True), # hidden layer
                                         nn.Linear(pred_dim, dim)) # output layer
         
-        self.theta_predictor = None
+        self.view_reconstructor = None
         if self.theta_layer_dim:
-            self.theta_predictor = nn.Sequential(nn.Linear(dim+dim, 64),
-                                                 nn.BatchNorm1d(64),
-                                                 nn.ReLU(inplace=True),
-                                                 nn.Linear(64, self.theta_layer_dim))
 
-    def forward(self, x1, x2):
+            # self.view_reconstructor = nn.Sequential(nn.Linear(self.theta_layer_dim+dim, 2048),
+            #                                         nn.BatchNorm1d(2048),
+            #                                         nn.ReLU(inplace=True),
+            #                                         nn.Unflatten(1, (32, 8, 8)),
+            #                                         # ((8-1)*2)-(2*2)+(6-1)+1
+            #                                         nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=5, stride=2, padding=2), # 8x8 -> 15x15
+            #                                         nn.BatchNorm2d(16),
+            #                                         nn.ReLU(inplace=True),
+            #                                         # (15-1)*2-(2*1)+(6-1)+1
+            #                                         nn.ConvTranspose2d(in_channels=16, out_channels=3, kernel_size=6, stride=2, padding=1), # 15x15 -> 32x32
+            #                                         )
+
+            self.view_reconstructor = nn.Sequential(nn.Linear(self.theta_layer_dim+dim, 2048),
+                                                    nn.BatchNorm1d(2048),
+                                                    nn.ReLU(inplace=True),
+                                                    nn.Unflatten(1, (32, 8, 8)),
+                                                    # ((8-1)*1)-(2*1)+(3-1)+1
+                                                    nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1), # 8x8 -> 8x8
+                                                    nn.BatchNorm2d(16),
+                                                    nn.ReLU(inplace=True),
+                                                    # ((8-1)*2)-(2*1)+(3-1)+1
+                                                    nn.ConvTranspose2d(in_channels=16, out_channels=16, kernel_size=3, stride=2, padding=1), # 8x8 -> 15x15
+                                                    nn.BatchNorm2d(16),
+                                                    nn.ReLU(inplace=True),
+                                                    # ((15-1)*2)-(2*1)+(4-1)+1
+                                                    nn.ConvTranspose2d(in_channels=16, out_channels=8, kernel_size=4, stride=2, padding=1), # 15x15 -> 30x30
+                                                    nn.BatchNorm2d(8),
+                                                    nn.ReLU(inplace=True),
+                                                    # ((30-1)*1)-(2*1)+(5-1)+1
+                                                    nn.ConvTranspose2d(in_channels=8, out_channels=3, kernel_size=5, stride=1, padding=1), # 29x29 -> 32x32
+            )
+
+
+    def forward(self, x, theta):
         """
         Input:
             x1: first views of images
@@ -60,14 +89,15 @@ class SimSiam(nn.Module):
         """
 
         # compute features for one view
-        z1 = self.encoder(x1) # NxC
-        z2 = self.encoder(x2) # NxC
-        
-        p1 = self.predictor(z1) # NxC
-        p2 = self.predictor(z2) # NxC
+        z = self.encoder(x) # NxC
+        p = self.predictor(z) # NxC
+        # print(p.shape)
+        # print(theta.shape)
+        input_tensor = torch.cat([p, theta], dim=1)
+        view_recon = self.view_reconstructor(input_tensor)
+        # print(view_recon.shape)
+        # input_tensor = input_tensor.view(-1, 3, 32, 32)
 
-        if self.theta_predictor:
-            thetas = self.theta_predictor(torch.cat([p1, p2], dim=1))
-            return thetas
+        return view_recon
 
-        return p1, p2, z1.detach(), z2.detach()
+      

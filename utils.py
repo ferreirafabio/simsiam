@@ -40,16 +40,16 @@ class SummaryWriterCustom(SummaryWriter):
 
     def write_stn_info(self, stn_images, images, thetas, epoch, tag_images, tag_thetas):
         theta_v1 = thetas[0][0].cpu().detach().numpy()
-        theta_v2 = thetas[1][0].cpu().detach().numpy()
+        # theta_v2 = thetas[1][0].cpu().detach().numpy()
         self.write_image_grid(tag=tag_images, stn_images=stn_images, original_images=images, epoch=epoch)
         self.write_theta_heatmap(tag=tag_thetas + " v1", theta=theta_v1, epoch=epoch)
-        self.write_theta_heatmap(tag=tag_thetas + " v2", theta=theta_v2, epoch=epoch)
-        try: # TODO: analyse "numpy.linalg.LinAlgError: SVD did not converge" error
-            theta_eucl_norm = np.linalg.norm(np.double(theta_v1 - theta_v2), 2)
-        except Exception as e:
-            print(e)
-            theta_eucl_norm = 0.
-        self.write_scalar(tag="theta eucl. norm.", scalar_value=theta_eucl_norm, epoch=epoch)
+        # self.write_theta_heatmap(tag=tag_thetas + " v2", theta=theta_v2, epoch=epoch)
+        # try: # TODO: analyse "numpy.linalg.LinAlgError: SVD did not converge" error
+            # theta_eucl_norm = np.linalg.norm(np.double(theta_v1 - theta_v2), 2)
+        # except Exception as e:
+            # print(e)
+            # theta_eucl_norm = 0.
+        # self.write_scalar(tag="theta eucl. norm.", scalar_value=theta_eucl_norm, epoch=epoch)
 
     def close(self):
         self.writer.close()
@@ -141,7 +141,7 @@ def image_grid(images, original_images, epoch, plot_size=16):
     figure = plt.figure(figsize=(x, num_images))
     plt.subplots_adjust(hspace=0.5)
 
-    titles = [f"orig@{epoch}", "view 1", "view 2"] + [f"local {n+1}" for n in range(len(images))]
+    titles = [f"orig@{epoch}", "STN view", "Rec. view"] + [f"local {n+1}" for n in range(len(images))]
     total = 0
     for i in range(num_images):  # orig_img in enumerate(original_images, 1):
         all_images = [original_images[i]] + [img[i] for img in images]
@@ -245,7 +245,7 @@ def print_gradients(stn, args):
 
     # head grads
     print(stn.module.transform_net.localization_net.heads[0].linear2.weight.grad)
-    print(stn.module.transform_net.localization_net.heads[1].linear2.weight.grad)
+    # print(stn.module.transform_net.localization_net.heads[1].linear2.weight.grad)
 
     print(f"CUDA MAX MEM:           {torch.cuda.max_memory_allocated()}")
     print(f"CUDA MEM ALLOCATED:     {torch.cuda.memory_allocated()}")
