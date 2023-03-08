@@ -275,6 +275,8 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
 
+    print(f"CUDA version being used: {torch.version.cuda}")
+
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -739,9 +741,18 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             simsiam_l = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
             total_l = simsiam_l + penalty_l
 
-        if math.isnan(float(total_l.item())):
-            raise ValueError('Loss is NaN')
+        if math.isinf(float(penalty_l.item())):
+            raise ValueError('Penalty Loss is Inf')
+        
+        if math.isinf(float(simsiam_l.item())):
+            raise ValueError('SimSiam Loss is Inf')
+        
+        if math.isnan(float(penalty_l.item())):
+            raise ValueError('Penalty Loss is NaN')
 
+        if math.isnan(float(simsiam_l.item())):
+            raise ValueError('SimSiam Loss is NaN')
+        
         total_loss.update(total_l.item(), images[0].size(0))
         simsiam_loss.update(simsiam_l.item(), images[0].size(0))
         

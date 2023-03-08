@@ -169,6 +169,7 @@ parser.add_argument('--fix-pred-lr', action='store_true',
 
 parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+',
                     help="")
+parser.add_argument('--view_reconstruction_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument("--finetune", default=False, type=utils.bool_flag,
                     help="Finetune whole network instead of linear eval protocol.")
 
