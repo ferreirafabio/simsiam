@@ -186,6 +186,7 @@ parser.add_argument('--use_pretrained_stn', default=False, type=utils.bool_flag,
 parser.add_argument('--four_way_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--theta_prediction_loss', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--view_reconstruction_loss', default=False, type=utils.bool_flag, help='')
+parser.add_argument('--view_reconstruction_loss2', default=False, type=utils.bool_flag, help='')
 parser.add_argument('--use_stn', default=True, type=utils.bool_flag, help='for testing reasons')
 
 # simsiam specific configs:
@@ -290,7 +291,7 @@ def main_worker(gpu, ngpus_per_node, args):
     
     # create model
     if args.dataset == 'CIFAR10': 
-        if args.theta_prediction_loss or args.view_reconstruction_loss:
+        if args.theta_prediction_loss or args.view_reconstruction_loss or args.view_reconstruction_loss2:
             theta_layer_dim = 6
         else:
             theta_layer_dim = None
@@ -413,12 +414,13 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if args.fix_pred_lr:
         optim_params = [{'params': model.module.encoder.parameters(), 'fix_lr': False},
-                        {'params': model.module.predictor.parameters(), 'fix_lr': True}]
+                        # {'params': model.module.predictor.parameters(), 'fix_lr': True}
+                        ]
         
-        if args.theta_prediction_loss:
-            optim_params += [{'params': model.module.theta_predictor.parameters(), 'fix_lr': False}]
+        # if args.theta_prediction_loss:
+            # optim_params += [{'params': model.module.theta_predictor.parameters(), 'fix_lr': False}]
 
-        if args.view_reconstruction_loss:
+        if args.view_reconstruction_loss or args.view_reconstruction_loss2:
             optim_params += [{'params': model.module.view_reconstructor.parameters(), 'fix_lr': False}]
     
 
@@ -531,22 +533,22 @@ def main_worker(gpu, ngpus_per_node, args):
     
     elif args.dataset == 'CIFAR10':
         
-        # if args.use_stn:
-        #     print("using CIFAR10 STN transforms")
-        #     transform = transforms.Compose([
-        #             transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
-        #             transforms.ToTensor(),
-        #         ])
-        # else:
-        print("using CIFAR10 default transforms")
-        transform = transforms.Compose([
-                transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
-                transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                transforms.RandomGrayscale(p=0.2),  
-                # transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize_cifar10,
-            ])
+        if args.use_stn:
+            print("using CIFAR10 STN transforms")
+            transform = transforms.Compose([
+                    transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                    transforms.ToTensor(),
+                ])
+        else:
+            print("using CIFAR10 default transforms")
+            transform = transforms.Compose([
+                    transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                    transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                    transforms.RandomGrayscale(p=0.2),  
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    normalize_cifar10,
+                ])
 
 
         collate_fn = None
@@ -639,7 +641,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
         theta_loss_meter = AverageMeter('Theta Prediction Loss', ':.6f')
         meters.append(theta_loss_meter)
     
-    if args.view_reconstruction_loss:
+    if args.view_reconstruction_loss or args.view_reconstruction_loss2:
         view_recon_meter = AverageMeter('View Reconstruction Loss', ':.6f')
         meters.append(view_recon_meter)
 
@@ -695,7 +697,7 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             # TODO: do this for stn_images_target and check validity for ImageNet    
         
         # compute output and loss
-        penalty_l = 0
+        penalty_l = torch.tensor(0.0).cuda(args.gpu)
         if args.use_stn and penalty is not None:
             penalty_l = torch.exp(penalty * args.penalty_weight)
         
@@ -735,6 +737,16 @@ def train(train_loader, model, criterion, optimizer, stn_optimizer, stn, target_
             total_l = simsiam_l + penalty_l
 
             view_recon_meter.update(simsiam_l.item(), images[0].size(0))
+
+        elif args.view_reconstruction_loss2:
+
+            view_recon = model(x=stn_images[0], theta=thetas[0].flatten(start_dim=1))
+            simsiam_l = nn.functional.mse_loss(view_recon, images)
+
+            total_l = simsiam_l + penalty_l
+
+            view_recon_meter.update(simsiam_l.item(), images[0].size(0))
+
         else:
             p1, p2, z1, z2 = model(x1=stn_images[0], x2=stn_images[1])
             

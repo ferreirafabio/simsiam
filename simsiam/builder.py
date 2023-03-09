@@ -37,44 +37,31 @@ class SimSiam(nn.Module):
         self.encoder.fc[6].bias.requires_grad = False # hack: not use bias as it is followed by BN
 
         # build a 2-layer predictor
-        self.predictor = nn.Sequential(nn.Linear(dim, pred_dim, bias=False),
-                                        nn.BatchNorm1d(pred_dim),
-                                        nn.ReLU(inplace=True), # hidden layer
-                                        nn.Linear(pred_dim, dim)) # output layer
+        # self.predictor = nn.Sequential(nn.Linear(dim, pred_dim, bias=False),
+        #                                 nn.BatchNorm1d(pred_dim),
+        #                                 nn.ReLU(inplace=True), # hidden layer
+        #                                 nn.Linear(pred_dim, dim)) # output layer
         
         self.view_reconstructor = None
         if self.theta_layer_dim:
-
-            # self.view_reconstructor = nn.Sequential(nn.Linear(self.theta_layer_dim+dim, 2048),
-            #                                         nn.BatchNorm1d(2048),
-            #                                         nn.ReLU(inplace=True),
-            #                                         nn.Unflatten(1, (32, 8, 8)),
-            #                                         # ((8-1)*2)-(2*2)+(6-1)+1
-            #                                         nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=5, stride=2, padding=2), # 8x8 -> 15x15
-            #                                         nn.BatchNorm2d(16),
-            #                                         nn.ReLU(inplace=True),
-            #                                         # (15-1)*2-(2*1)+(6-1)+1
-            #                                         nn.ConvTranspose2d(in_channels=16, out_channels=3, kernel_size=6, stride=2, padding=1), # 15x15 -> 32x32
-            #                                         )
-
-            self.view_reconstructor = nn.Sequential(nn.Linear(self.theta_layer_dim+dim, 2048),
-                                                    nn.LayerNorm(2048),
+            self.view_reconstructor = nn.Sequential(nn.Linear(self.theta_layer_dim+dim, 2048, bias=False),
+                                                    nn.BatchNorm1d(2048), 
                                                     nn.LeakyReLU(inplace=True),
                                                     nn.Unflatten(1, (32, 8, 8)),
                                                     # ((8-1)*1)-(2*1)+(3-1)+1
-                                                    nn.ConvTranspose2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1), # 8x8 -> 8x8
-                                                    nn.BatchNorm2d(32),
+                                                    nn.ConvTranspose2d(in_channels=32, out_channels=128, kernel_size=3, stride=1, padding=1, bias=False), # 8x8 -> 8x8
+                                                    nn.BatchNorm2d(128),
                                                     nn.LeakyReLU(inplace=True),
                                                     # ((8-1)*2)-(2*1)+(3-1)+1
-                                                    nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=3, stride=2, padding=1), # 8x8 -> 15x15
-                                                    nn.BatchNorm2d(16),
+                                                    nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=3, stride=2, padding=1, bias=False), # 8x8 -> 15x15 
+                                                    nn.BatchNorm2d(64),
                                                     nn.LeakyReLU(inplace=True),
                                                     # ((15-1)*2)-(2*1)+(4-1)+1
-                                                    nn.ConvTranspose2d(in_channels=16, out_channels=16, kernel_size=4, stride=2, padding=1), # 15x15 -> 30x30
-                                                    nn.BatchNorm2d(16),
+                                                    nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=4, stride=2, padding=1, bias=False), # 15x15 -> 30x30 
+                                                    nn.BatchNorm2d(32),
                                                     nn.LeakyReLU(inplace=True),
                                                     # ((30-1)*1)-(2*1)+(5-1)+1
-                                                    nn.ConvTranspose2d(in_channels=16, out_channels=3, kernel_size=5, stride=1, padding=1), # 29x29 -> 32x32
+                                                    nn.ConvTranspose2d(in_channels=32, out_channels=3, kernel_size=5, stride=1, padding=1, bias=False), # 29x29 -> 32x32
             )
 
 
@@ -89,11 +76,13 @@ class SimSiam(nn.Module):
         """
 
         # compute features for one view
-        z = self.encoder(x) # NxC
-        p = self.predictor(z) # NxC
+        # z = self.encoder(x) # NxC
+        # p = self.predictor(z) # NxC
         # print(p.shape)
         # print(theta.shape)
-        input_tensor = torch.cat([p, theta], dim=1)
+        # input_tensor = torch.cat([p, theta], dim=1)
+        z = self.encoder(x) # NxC
+        input_tensor = torch.cat([z, theta], dim=1)
         view_recon = self.view_reconstructor(input_tensor)
 
         return view_recon

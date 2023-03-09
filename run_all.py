@@ -167,11 +167,10 @@ parser.add_argument('--fix-pred-lr', action='store_true',
                     "If specified, the STN is not trained and used to 
                     "pre-process images solely.""")
 
-parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+',
-                    help="")
+parser.add_argument("--pipeline_mode", default=('pretrain', 'frozen', 'eval'), type=str, nargs='+', help="")
 parser.add_argument('--view_reconstruction_loss', default=False, type=utils.bool_flag, help='')
-parser.add_argument("--finetune", default=False, type=utils.bool_flag,
-                    help="Finetune whole network instead of linear eval protocol.")
+parser.add_argument('--view_reconstruction_loss2', default=False, type=utils.bool_flag, help='')
+parser.add_argument("--finetune", default=False, type=utils.bool_flag, help="Finetune whole network instead of linear eval protocol.")
 
 def set_args(outer_args, dct):
     for k, v in dct.items():
