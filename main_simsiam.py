@@ -537,6 +537,8 @@ def main_worker(gpu, ngpus_per_node, args):
             print("using CIFAR10 STN transforms")
             transform = transforms.Compose([
                     transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
+                    transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                    transforms.RandomGrayscale(p=0.2),
                     transforms.ToTensor(),
                 ])
         else:
@@ -544,7 +546,7 @@ def main_worker(gpu, ngpus_per_node, args):
             transform = transforms.Compose([
                     transforms.RandomResizedCrop(32, scale=(0.2, 1.)),
                     transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                    transforms.RandomGrayscale(p=0.2),  
+                    transforms.RandomGrayscale(p=0.2),
                     transforms.RandomHorizontalFlip(),
                     transforms.ToTensor(),
                     normalize_cifar10,
